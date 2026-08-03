@@ -1,3 +1,1 @@
-from ._mineru_llama_cpp import ping
-
-__all__ = ["ping"]
+__all__: list[str] = []
