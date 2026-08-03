@@ -135,3 +135,53 @@ class Engine:
             if isinstance(item, Exception):
                 raise item
             yield item
+
+    # --- lifecycle ---
+
+    def close(self) -> None:
+        """Explicit shutdown: terminate + join the background loop thread,
+        free the llama backend. Idempotent (safe to call more than once).
+
+        v1 assumes no in-flight generate()/stream() calls when close() is
+        called — see design spec §5.4's note on close()/in-flight requests
+        for why this isn't handled defensively yet."""
+        if self._closed:
+            return
+        self._closed = True
+        del self._core  # drops the last reference -> EngineCore's C++ destructor runs now
+
+    async def aclose(self) -> None:
+        """Async version of close(), offloaded to a thread so it doesn't
+        block the event loop while the loop thread joins."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.close)
+
+    def __enter__(self) -> Engine:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    async def __aenter__(self) -> Engine:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        await self.aclose()
+
+    def __del__(self) -> None:
+        """Safety-net fallback only — normal code should call close()/
+        aclose() explicitly (or use `with`/`async with`)."""
+        try:
+            self.close()
+        except Exception:
+            pass
