@@ -127,3 +127,84 @@ EngineCore::GenerateResult EngineCore::generate(const std::string & body_json) {
     result.timings          = extract_timings(j);
     return result;
 }
+
+EngineCore::StreamHandle::StreamHandle(std::unique_ptr<server_response_reader> rd)
+    : rd_(std::move(rd)) {}
+
+EngineCore::Chunk EngineCore::StreamHandle::next_chunk() {
+    Chunk chunk;
+    if (done_) {
+        // Caller kept calling after the final chunk; report as an immediate
+        // final (empty-delta) chunk rather than blocking on a reader that
+        // has nothing left to give.
+        chunk.is_final = true;
+        chunk.finish_reason = "stop";
+        return chunk;
+    }
+
+    auto r = rd_->next([]() { return false; });
+    if (!r) {
+        chunk.is_error   = true;
+        chunk.error_json = R"({"type":"server_error","message":"no result (stopped)"})";
+        done_ = true;
+        return chunk;
+    }
+    if (r->is_error()) {
+        chunk.is_error   = true;
+        chunk.error_json = r->to_json().dump();
+        done_ = true;
+        return chunk;
+    }
+
+    // The first partial chunk (is_begin, an SSE-header signal with no
+    // content) serializes to a null json, not an object — see server-task.cpp
+    // server_task_result_cmpl_partial::to_json(). Treat it as an empty delta.
+    json j = r->to_json();
+    if (!j.is_null()) {
+        chunk.delta = j.value("content", std::string());
+    }
+
+    if (r->is_stop()) {
+        chunk.is_final          = true;
+        chunk.finish_reason     = map_finish_reason(j.is_null() ? std::string() : j.value("stop_type", std::string()));
+        chunk.tokens_evaluated  = j.is_null() ? 0 : j.value("tokens_evaluated", 0);
+        chunk.tokens_predicted  = j.is_null() ? 0 : j.value("tokens_predicted", 0);
+        chunk.timings           = j.is_null() ? Timings{} : extract_timings(j);
+        done_ = true;
+    }
+    return chunk;
+}
+
+EngineCore::StreamHandle EngineCore::generate_stream(const std::string & body_json) {
+    json body = json::parse(body_json);  // throws on malformed input; propagates to binding layer
+
+    // IMPORTANT: construct the ONE server_response_reader that will live for
+    // this stream's entire lifetime directly on the heap, via guaranteed
+    // copy elision from get_response_reader()'s return value. From this
+    // point on it is mutated in place through the pointer (get_new_id(),
+    // post_task()) and never copied again — see the correctness note at the
+    // top of Phase B for why that matters (a second copy of a *populated*
+    // reader would cancel the task when the copy is destroyed).
+    auto reader = std::make_unique<server_response_reader>(ctx_.get_response_reader());
+
+    server_task task(SERVER_TASK_TYPE_COMPLETION);
+    {
+        std::lock_guard<std::mutex> lk(parse_mu_);
+        task.id = reader->get_new_id();
+
+        std::vector<raw_buffer> files;
+        json parsed = oaicompat_chat_params_parse(body, meta_->chat_params, files);
+        const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(ctx_.get_llama_context()));
+        task.params = server_schema::eval_llama_cmpl_schema(
+            vocab, params_, meta_->slot_n_ctx, meta_->logit_bias_eog, parsed);
+        task.params.stream       = true;
+        task.params.res_type     = TASK_RESPONSE_TYPE_NONE;
+        task.params.cache_prompt = false;
+        task.cli        = true;
+        task.cli_prompt = parsed.at("prompt").get<std::string>();
+        task.cli_files  = std::move(files);
+    }
+
+    reader->post_task(std::move(task));
+    return StreamHandle(std::move(reader));  // only the unique_ptr moves; the reader's identity never changes
+}
