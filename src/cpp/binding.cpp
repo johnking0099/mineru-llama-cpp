@@ -82,12 +82,72 @@ py::dict generate_impl(EngineCore & self, const std::string & body) {
     return out;
 }
 
+// Wraps EngineCore::StreamHandle (a move-only C++ type) so pybind11 can
+// hold it inside a Python-iterable object. Implements the Python iterator
+// protocol: __next__ returns a dict per chunk (including the final one,
+// which carries finish_reason/tokens_*/timings) and raises StopIteration on
+// the call *after* the final chunk was returned.
+class PyStreamIterator {
+public:
+    explicit PyStreamIterator(EngineCore::StreamHandle handle) : handle_(std::move(handle)) {}
+
+    py::dict next() {
+        if (finished_) {
+            throw py::stop_iteration();
+        }
+        EngineCore::Chunk c;
+        {
+            py::gil_scoped_release release;
+            c = handle_.next_chunk();
+        }
+        if (c.is_error) {
+            raise_from_error_json(c.error_json);
+        }
+        py::dict out;
+        out["delta"] = c.delta;
+        if (c.is_final) {
+            finished_ = true;
+            out["finish_reason"]    = c.finish_reason;
+            out["tokens_evaluated"] = c.tokens_evaluated;
+            out["tokens_predicted"] = c.tokens_predicted;
+            out["timings"]          = timings_to_dict(c.timings);
+        } else {
+            out["finish_reason"]    = py::none();
+            out["tokens_evaluated"] = py::none();
+            out["tokens_predicted"] = py::none();
+            out["timings"]          = py::none();
+        }
+        return out;
+    }
+
+private:
+    EngineCore::StreamHandle handle_;
+    bool finished_ = false;
+};
+
+PyStreamIterator generate_stream_impl(EngineCore & self, const std::string & body) {
+    // No GIL release here: this only does the fast parse+post phase (a few
+    // ms at most for jinja rendering), not the blocking wait — matches the
+    // parse_mu_-guarded critical section in EngineCore. next_chunk() (above)
+    // is what releases the GIL for the actual blocking wait.
+    try {
+        return PyStreamIterator(self.generate_stream(body));
+    } catch (const std::exception & e) {
+        raise_mapped_error("invalid_request_error", e.what());
+    }
+}
+
 } // namespace
 
 PYBIND11_MODULE(_mineru_llama_cpp, m) {
+    py::class_<PyStreamIterator>(m, "_StreamIterator")
+        .def("__iter__", [](PyStreamIterator & self) -> PyStreamIterator & { return self; })
+        .def("__next__", &PyStreamIterator::next);
+
     py::class_<EngineCore>(m, "_EngineCore")
         .def(py::init<const std::string &, const std::string &, int, int, int>(),
              py::arg("model_path"), py::arg("mmproj_path"), py::arg("n_ctx"),
              py::arg("n_gpu_layers"), py::arg("n_parallel"))
-        .def("generate", &generate_impl, py::arg("body"));
+        .def("generate", &generate_impl, py::arg("body"))
+        .def("generate_stream", &generate_stream_impl, py::arg("body"));
 }
