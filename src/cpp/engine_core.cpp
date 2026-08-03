@@ -110,7 +110,7 @@ EngineCore::GenerateResult EngineCore::generate(const std::string & body_json) {
     auto r = rd.next([]() { return false; });  // blocks until the result arrives; no GIL concept at this layer
     if (!r) {
         result.is_error   = true;
-        result.error_json = R"({"type":"server_error","message":"no result (stopped)"})";
+        result.error_json = R"json({"type":"server_error","message":"no result (stopped)"})json";
         return result;
     }
     if (r->is_error()) {
@@ -145,7 +145,7 @@ EngineCore::Chunk EngineCore::StreamHandle::next_chunk() {
     auto r = rd_->next([]() { return false; });
     if (!r) {
         chunk.is_error   = true;
-        chunk.error_json = R"({"type":"server_error","message":"no result (stopped)"})";
+        chunk.error_json = R"json({"type":"server_error","message":"no result (stopped)"})json";
         done_ = true;
         return chunk;
     }
@@ -179,12 +179,23 @@ EngineCore::StreamHandle EngineCore::generate_stream(const std::string & body_js
     json body = json::parse(body_json);  // throws on malformed input; propagates to binding layer
 
     // IMPORTANT: construct the ONE server_response_reader that will live for
-    // this stream's entire lifetime directly on the heap, via guaranteed
-    // copy elision from get_response_reader()'s return value. From this
-    // point on it is mutated in place through the pointer (get_new_id(),
-    // post_task()) and never copied again — see the correctness note at the
-    // top of Phase B for why that matters (a second copy of a *populated*
-    // reader would cancel the task when the copy is destroyed).
+    // this stream's entire lifetime, then mutate it in place through the
+    // pointer (get_new_id(), post_task()) — never copy or move the
+    // underlying object again after this line.
+    //
+    // Note on the line below: std::make_unique<T>(get_response_reader())
+    // does NOT elide a copy here — make_unique takes its argument through a
+    // forwarding-reference template parameter, which is not a
+    // guaranteed-copy-elision context, so the compiler genuinely invokes
+    // server_response_reader's implicit copy constructor once (confirmed via
+    // -Wdeprecated-copy-with-user-provided-dtor). This is harmless ONLY
+    // because the reader returned by get_response_reader() is still empty
+    // (no task posted, id_tasks empty) at this exact point, so the copy's
+    // destructor-triggered stop() is a no-op. The invariant we must actually
+    // preserve is: never touch a *populated* reader (one that has had
+    // post_task() called on it) through anything other than the single
+    // unique_ptr from here on — see the correctness note at the top of
+    // Phase B.
     auto reader = std::make_unique<server_response_reader>(ctx_.get_response_reader());
 
     server_task task(SERVER_TASK_TYPE_COMPLETION);
