@@ -35,8 +35,13 @@ class Engine:
         model/mmproj must be local file paths (no HuggingFace repo id
         auto-download — see design spec §1 "非目标").
         """
-        self._core = _EngineCore(str(model), str(mmproj), n_ctx, n_gpu_layers, n_parallel)
+        # Set before constructing _core: if _EngineCore(...) raises, __del__
+        # on the partially-constructed Engine still finds these attributes
+        # (otherwise close() would hit AttributeError, silently swallowed by
+        # __del__'s try/except, masking the real construction failure).
         self._closed = False
+        self._close_lock = threading.Lock()
+        self._core = _EngineCore(str(model), str(mmproj), n_ctx, n_gpu_layers, n_parallel)
 
     def _build_body(self, messages: Messages, sampling_params: SamplingParams | None, stream: bool) -> str:
         body: dict = {"model": "mineru-llama-cpp", "messages": messages, "stream": stream}
@@ -140,15 +145,19 @@ class Engine:
 
     def close(self) -> None:
         """Explicit shutdown: terminate + join the background loop thread,
-        free the llama backend. Idempotent (safe to call more than once).
+        free the llama backend. Idempotent and thread-safe (safe to call
+        more than once, including concurrently — aclose() offloads to a
+        thread pool executor, making concurrent close() calls a realistic
+        scenario, not just a hypothetical one).
 
         v1 assumes no in-flight generate()/stream() calls when close() is
         called — see design spec §5.4's note on close()/in-flight requests
         for why this isn't handled defensively yet."""
-        if self._closed:
-            return
-        self._closed = True
-        del self._core  # drops the last reference -> EngineCore's C++ destructor runs now
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            del self._core  # drops the last reference -> EngineCore's C++ destructor runs now
 
     async def aclose(self) -> None:
         """Async version of close(), offloaded to a thread so it doesn't
