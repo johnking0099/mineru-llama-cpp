@@ -72,3 +72,61 @@ class Engine:
         not block the event loop."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.generate, messages, sampling_params)
+
+    # --- streaming ---
+
+    def stream(
+        self,
+        messages: Messages,
+        sampling_params: SamplingParams | None = None,
+    ) -> Iterator[GenerateChunk]:
+        """Synchronous generator, yields one GenerateChunk per token. The
+        final chunk has finish_reason set (all others have it as None) —
+        check `chunk.finish_reason is not None` to detect the end."""
+        body = self._build_body(messages, sampling_params, stream=True)
+        core_iter = self._core.generate_stream(body)
+        for c in core_iter:
+            yield GenerateChunk(
+                delta=c["delta"],
+                finish_reason=c["finish_reason"],
+                tokens_evaluated=c["tokens_evaluated"],
+                tokens_predicted=c["tokens_predicted"],
+                timings=_timings_from_dict(c["timings"]),
+            )
+
+    async def astream(
+        self,
+        messages: Messages,
+        sampling_params: SamplingParams | None = None,
+    ) -> AsyncIterator[GenerateChunk]:
+        """Async version of stream(): a real generator-to-generator bridge.
+
+        run_in_executor() alone can't drive a synchronous *generator* (it's
+        built for "call once, get one result"), so this runs stream() to
+        completion on a background thread and relays each chunk back to the
+        event loop through an asyncio.Queue via call_soon_threadsafe — the
+        standard sync-iterator-to-async-iterator bridge pattern.
+        """
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        _SENTINEL = object()
+
+        def _run() -> None:
+            try:
+                for chunk in self.stream(messages, sampling_params):
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as exc:  # noqa: BLE001 - relayed to the consumer, not swallowed
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        while True:
+            item = await queue.get()
+            if item is _SENTINEL:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
