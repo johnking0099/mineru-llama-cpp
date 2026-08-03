@@ -106,6 +106,11 @@ class Engine:
         completion on a background thread and relays each chunk back to the
         event loop through an asyncio.Queue via call_soon_threadsafe — the
         standard sync-iterator-to-async-iterator bridge pattern.
+
+        Note: breaking out of the consuming loop early (or otherwise
+        abandoning this generator before it's exhausted) does not cancel
+        the underlying generation — the background thread runs to
+        completion regardless, occupying a slot until the model finishes.
         """
         loop = asyncio.get_event_loop()
         queue: asyncio.Queue = asyncio.Queue()
