@@ -25,8 +25,8 @@ async def test_concurrent_slots_produce_identical_output(engine):
 
 
 def test_determinism_holds_across_separate_engine_instances():
-    with Engine(MODEL, MMPROJ, n_ctx=4096) as e1:
+    with Engine(MODEL, MMPROJ, n_ctx_seq=4096) as e1:
         out1 = e1.generate(_MESSAGES, _SP).content
-    with Engine(MODEL, MMPROJ, n_ctx=4096) as e2:
+    with Engine(MODEL, MMPROJ, n_ctx_seq=4096) as e2:
         out2 = e2.generate(_MESSAGES, _SP).content
     assert out1 == out2

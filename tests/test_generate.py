@@ -37,3 +37,25 @@ def test_generate_with_image_layout_detection(engine, layout_image_path):
     # 1369 image tokens (1036x1036 image) + ~25 text tokens; confirms the
     # image was actually routed through mtmd, not silently dropped.
     assert result.tokens_evaluated > 1000
+
+
+def test_generate_strips_eos_token_by_default(engine):
+    """Engine is constructed with special=true (see engine_core.cpp), so the
+    model's chat-template EOS token would otherwise leak into `content` as
+    literal text (e.g. trailing "...<|im_end|>") whenever generation stops
+    naturally instead of being cut short by n_predict. Engine auto-fills
+    SamplingParams.stop with the model's EOS token string when the caller
+    doesn't set one, which strips it -- verify that actually happens."""
+    sp = SamplingParams(temperature=0.0, top_k=1, n_predict=32)
+    result = engine.generate([{"role": "user", "content": "Say hello in one word."}], sp)
+    assert result.finish_reason == "stop", "test assumes natural EOS stop, not a length cutoff"
+    assert "<|im_end|>" not in result.content
+
+
+def test_generate_explicit_empty_stop_keeps_eos_token(engine):
+    """Passing stop=[] is the caller opting out of Engine's default
+    EOS-stripping behavior -- must not be silently overridden."""
+    sp = SamplingParams(temperature=0.0, top_k=1, n_predict=32, stop=[])
+    result = engine.generate([{"role": "user", "content": "Say hello in one word."}], sp)
+    assert result.finish_reason == "stop"
+    assert result.content.endswith("<|im_end|>")

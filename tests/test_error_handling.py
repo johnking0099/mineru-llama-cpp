@@ -33,16 +33,16 @@ def test_bad_image_raises_invalid_request(engine):
 
 
 def test_context_exceeded_raises_context_exceeded_error():
-    # A dedicated small-n_ctx Engine (not the shared session fixture), so
-    # n_ctx=512 here doesn't affect any other test.
-    with Engine(MODEL, MMPROJ, n_ctx=512) as small_engine:
+    # A dedicated small-context Engine (not the shared session fixture), so
+    # n_ctx_seq=512 here doesn't affect any other test.
+    with Engine(MODEL, MMPROJ, n_ctx_seq=512) as small_engine:
         huge_prompt = "x " * 2000  # far more than 512 tokens
         with pytest.raises(ContextExceededError):
             small_engine.generate([{"role": "user", "content": huge_prompt}])
 
 
 def test_context_exceeded_is_also_an_invalid_request_error():
-    with Engine(MODEL, MMPROJ, n_ctx=512) as small_engine:
+    with Engine(MODEL, MMPROJ, n_ctx_seq=512) as small_engine:
         huge_prompt = "x " * 2000
         with pytest.raises(InvalidRequestError):  # the base-class catch must also work
             small_engine.generate([{"role": "user", "content": huge_prompt}])

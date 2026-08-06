@@ -38,7 +38,7 @@ def test_many_requests_no_memory_growth(engine):
 
 
 def test_close_is_idempotent_and_engine_is_reconstructable():
-    eng = Engine(MODEL, MMPROJ, n_ctx=4096)
+    eng = Engine(MODEL, MMPROJ, n_ctx_seq=4096)
     assert eng.generate([{"role": "user", "content": "hi"}]).content
     eng.close()
     gc.collect()
@@ -47,12 +47,12 @@ def test_close_is_idempotent_and_engine_is_reconstructable():
 
     # A fresh Engine must still load and work after the first one closed --
     # proves the C++ backend was actually released, not just Python-detached.
-    eng2 = Engine(MODEL, MMPROJ, n_ctx=4096)
+    eng2 = Engine(MODEL, MMPROJ, n_ctx_seq=4096)
     assert eng2.generate([{"role": "user", "content": "hi"}]).content
     eng2.close()
 
 
 def test_context_manager_closes_on_exit():
-    with Engine(MODEL, MMPROJ, n_ctx=4096) as eng:
+    with Engine(MODEL, MMPROJ, n_ctx_seq=4096) as eng:
         assert eng.generate([{"role": "user", "content": "hi"}]).content
     assert eng._closed

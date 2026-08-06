@@ -40,6 +40,6 @@ def engine():
     slow). n_parallel=4 so concurrency tests (Task 24) have multiple slots
     to work with; this is harmless for tests that only ever issue one
     request at a time."""
-    eng = Engine(MODEL, MMPROJ, n_ctx=8192, n_gpu_layers=99, n_parallel=4)
+    eng = Engine(MODEL, MMPROJ, n_ctx_seq=8192, n_gpu_layers=99, n_parallel=4)
     yield eng
     eng.close()
