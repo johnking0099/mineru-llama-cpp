@@ -50,6 +50,23 @@ set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 # MODULEs at runtime without setting GGML_BACKEND_PATH.
 set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
 
+# GGML_NATIVE (llama.cpp's default ON) is incompatible with GGML_BACKEND_DL:
+# on x86_64, ggml/src/ggml-cpu/CMakeLists.txt:374 raises a hard
+# `FATAL_ERROR "GGML_NATIVE is not compatible with GGML_BACKEND_DL"` during
+# configure (the feature check depends on ARCH_DEFINITIONS, which
+# GGML_NATIVE mode never sets). arm64 happens to skip that check and builds
+# anyway, but the underlying incompatibility is the same -- the right fix is
+# to turn it off everywhere, not rely on arm64's missing guard. Two further
+# reasons this is the right default for a published wheel even aside from
+# the DL conflict: (1) -march=native bakes in the *build* machine's CPU
+# instruction set, so a wheel built on, say, Apple M4 or x86 zen4 can SIGILL
+# on an older host; (2) llama.cpp's own reproducible-build path already
+# forces GGML_NATIVE off via SOURCE_DATE_EPOCH/CMAKE_CROSSCOMPILING for the
+# same reason. llama.cpp recommends GGML_CPU_ALL_VARIANTS for per-host CPU
+# autoselection under DL, but we don't need that complexity yet -- a single
+# portable CPU backend is fine for this library's workload.
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+
 # Keep native runtime artifacts scoped inside the Python package directory
 # instead of at the wheel root, so the backend MODULEs (discovered via
 # load_packaged_backends()) and the SONAME libs (found via RPATH) both
