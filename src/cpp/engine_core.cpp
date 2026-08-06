@@ -4,14 +4,28 @@
 #include "server-common.h"
 #include "server-schema.h"
 #include "common.h"
+#include "ggml-backend.h"
 #include "llama.h"
 #include "log.h"
 #include "gguf.h"
 
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__) || defined(__APPLE__)
+#include <dlfcn.h>
+#endif
+// TODO(windows): no dladdr() equivalent wired up yet for
+// load_packaged_backends() below -- would need GetModuleHandleExW(
+// GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, ...) + GetModuleFileNameW() to
+// locate this extension's own .pyd, then search for a sibling bin\ (see
+// engine_core_module_anchor()'s comment). Until implemented, Windows builds
+// fall through to ggml's own default search (llama_backend_init()'s
+// ggml_backend_load_all() fallback, executable-dir/cwd only) via
+// load_packaged_backends() below being a no-op on this platform.
 
 using json = nlohmann::ordered_json;
 
@@ -54,6 +68,72 @@ int read_n_ctx_train_from_gguf(const std::string & model_path) {
     gguf_free(ctx);
     return result;
 }
+
+// Locates and dlopen-loads this extension's own bundled ggml backend
+// MODULEs (see the top-level CMakeLists.txt's GGML_BACKEND_DL comment for
+// why they're MODULEs rather than hard-linked). Without GGML_BACKEND_PATH
+// set, ggml's own default search (ggml_backend_load_all(), see
+// ggml-backend-reg.cpp's ggml_backend_load_best()) only checks the
+// executable directory and cwd -- for a Python extension loaded by the
+// `python` interpreter, that's the interpreter's own directory, never ours.
+// So we resolve our own module path via dladdr() (same technique
+// ggml.c:130 already uses on Linux/macOS for backtraces) and pass an
+// explicit dir_path to ggml_backend_load_all_from_path() instead.
+//
+// Two on-disk layouts, both real (see top-level CMakeLists.txt's comment on
+// CMAKE_INSTALL_BINDIR): a packaged wheel puts the extension at
+// mineru_llama_cpp/_mineru_llama_cpp*.so with backends alongside it at
+// mineru_llama_cpp/bin/ (one level down); scikit-build-core's editable
+// "inplace" mode instead builds the extension straight into
+// src/mineru_llama_cpp/ while backend MODULEs land in the *build tree's*
+// CMAKE_RUNTIME_OUTPUT_DIRECTORY, which for inplace editable builds is the
+// repo root's bin/ (CMAKE_BINARY_DIR == CMAKE_SOURCE_DIR for that mode --
+// see the top-level CMakeLists.txt comment) -- two directories up from
+// src/mineru_llama_cpp/. Both are tried, nearest first; a middle
+// one-level-up candidate is kept too in case either layout's nesting
+// depth ever shifts by one.
+//
+// This matters beyond "GPU acceleration missing": with GGML_BACKEND_DL=ON,
+// ggml_add_backend(CPU) (ggml/src/CMakeLists.txt) makes the CPU backend a
+// MODULE too, same as every accelerator -- there is no compiled-in static
+// CPU registration to fall back on (that only exists when
+// GGML_BACKEND_DL=OFF, via the GGML_USE_CPU compile define). If no backend
+// at all gets registered, llama_numa_init() immediately hits
+// `GGML_ASSERT(dev && "CPU backend is not loaded")` (src/llama.cpp) --
+// a hard abort, not a catchable C++ exception. Finding this directory is
+// therefore load-bearing for every backend, not just optional accelerators.
+#if defined(__linux__) || defined(__APPLE__)
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+void engine_core_module_anchor() {}
+
+void load_packaged_backends() {
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void *>(&engine_core_module_anchor), &info) == 0 || !info.dli_fname) {
+        return;
+    }
+
+    const std::filesystem::path module_dir = std::filesystem::path(info.dli_fname).parent_path();
+
+    const std::filesystem::path candidates[] = {
+        module_dir / "bin",                                    // wheel: mineru_llama_cpp/bin
+        module_dir.parent_path() / "bin",                       // defensive middle case
+        module_dir.parent_path().parent_path() / "bin",         // editable inplace: <repo-root>/bin
+    };
+
+    std::error_code ec;
+    for (const auto & candidate : candidates) {
+        if (std::filesystem::is_directory(candidate, ec)) {
+            ggml_backend_load_all_from_path(candidate.string().c_str());
+            return;
+        }
+        ec.clear();
+    }
+}
+#else
+void load_packaged_backends() {}
+#endif
 
 EngineCore::Timings extract_timings(const json & j) {
     EngineCore::Timings t;
@@ -134,6 +214,14 @@ EngineCore::EngineCore(const std::string & model_path, const std::string & mmpro
     // available.
     postprocess_cpu_params(params_.cpuparams, nullptr);
 
+    // Must run before llama_backend_init(): that function only falls back to
+    // ggml's default search path (ggml_backend_load_all(), executable-dir +
+    // cwd) if nothing has been registered yet (see its
+    // `if (!ggml_backend_reg_count())` guard in src/llama.cpp) -- calling
+    // load_packaged_backends() first means that guard sees backends already
+    // registered and skips its own (Python-interpreter-directory) search,
+    // which would never find our bundled MODULEs anyway.
+    load_packaged_backends();
     llama_backend_init();
     llama_numa_init(params_.numa);
 

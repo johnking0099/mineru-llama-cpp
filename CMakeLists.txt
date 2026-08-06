@@ -33,6 +33,43 @@ set(LLAMA_USE_PREBUILT_UI OFF CACHE BOOL "" FORCE)  # LLAMA_BUILD_UI alone doesn
 # system libraries.
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 
+# Load ggml backends (CPU, Vulkan, Metal, CUDA, ...) as separate dlopen'd
+# MODULE libraries at runtime instead of hard-linking them into
+# _mineru_llama_cpp/llama-server. Without this, a backend's own shared
+# library dependency (e.g. libvulkan.so.1) becomes a *hard* DT_NEEDED of the
+# whole extension: on a machine that lacks that dependency, the extension
+# fails to even import, because the dynamic linker resolves every DT_NEEDED
+# before any of our code -- including ggml's own graceful backend-selection
+# fallback in its registry -- gets a chance to run (confirmed via a Linux
+# container lacking libvulkan.so.1: ImportError at import time, not a clean
+# CPU fallback). With GGML_BACKEND_DL=ON, a missing backend dependency just
+# means that one MODULE fails to dlopen and never registers; ggml's CPU
+# backend (always statically linked/registered, see ggml-backend-reg.cpp's
+# #ifdef GGML_USE_CPU block) still works, so CPU fallback actually happens.
+# See engine_core.cpp's load_packaged_backends() for how we locate these
+# MODULEs at runtime without setting GGML_BACKEND_PATH.
+set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
+
+# Keep native runtime artifacts scoped inside the Python package directory
+# instead of at the wheel root, so the backend MODULEs (discovered via
+# load_packaged_backends()) and the SONAME libs (found via RPATH) both
+# travel inside mineru_llama_cpp/ as one relocatable unit. llama-server and
+# the backend MODULEs share bin/ (both installed via CMAKE_INSTALL_BINDIR --
+# see ggml/src/CMakeLists.txt's ggml_add_backend_library()), so llama.cpp's
+# own executable-relative backend search also works when running the
+# packaged llama-server standalone, outside of Python.
+#
+# These only affect install()-time layout (regular/wheel builds); editable
+# "inplace" builds never run `cmake --install` (see src/cpp/CMakeLists.txt's
+# comment on LIBRARY_OUTPUT_DIRECTORY) and instead place build-tree
+# artifacts at the repo root's bin/ -- scikit-build-core's inplace editable
+# mode sets CMAKE_BINARY_DIR to CMAKE_SOURCE_DIR itself, ignoring pyproject
+# .toml's build-dir setting entirely (see get_build_dir() in
+# scikit_build_core/build/common_wheel_helpers.py). load_packaged_backends()
+# accounts for both layouts.
+set(CMAKE_INSTALL_BINDIR "mineru_llama_cpp/bin" CACHE PATH "" FORCE)
+set(CMAKE_INSTALL_LIBDIR "mineru_llama_cpp/lib" CACHE PATH "" FORCE)
+
 # Every binary and shared library under third_party/llama.cpp links its
 # sibling ggml/llama/mtmd libs via @rpath/$ORIGIN (bare LC_LOAD_DYLIB/DT_NEEDED
 # entries with no baked-in directory). CMAKE_INSTALL_RPATH is a

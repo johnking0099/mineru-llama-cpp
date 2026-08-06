@@ -6,6 +6,15 @@ pybind11_add_module(_mineru_llama_cpp
     engine_core.cpp
 )
 
+# dladdr() (engine_core.cpp's load_packaged_backends()) is a glibc extension;
+# its declaration in <dlfcn.h> is hidden unless _GNU_SOURCE is defined --
+# same requirement ggml itself already has for its own dladdr() use
+# (ggml/src/CMakeLists.txt adds this for Linux/Android). Not needed on
+# Darwin, where dladdr() is always visible in the system <dlfcn.h>.
+if (CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Android")
+    target_compile_definitions(_mineru_llama_cpp PRIVATE _GNU_SOURCE)
+endif()
+
 # These includes mirror the ones proven to work in the technical-validation
 # spike's CMakeLists.txt, just re-pathed to the submodule. We add them
 # explicitly rather than relying on transitive include propagation from the
@@ -28,14 +37,25 @@ target_link_libraries(_mineru_llama_cpp PRIVATE
     llama
     ggml
     ggml-base
-    ggml-cpu
 )
+
+# ggml-cpu/ggml-metal are ggml_add_backend_library() targets (see
+# ggml/src/CMakeLists.txt). With GGML_BACKEND_DL=ON (forced in the top-level
+# CMakeLists.txt) they build as standalone MODULE libraries meant to be
+# dlopen'd at runtime via load_packaged_backends() (engine_core.cpp), not
+# linked at build time -- linking a MODULE library directly isn't the
+# supported usage. This project always builds with GGML_BACKEND_DL=ON, so
+# these branches are effectively dead today; kept so the target still links
+# correctly if that ever changes back to OFF.
+if (NOT GGML_BACKEND_DL)
+    target_link_libraries(_mineru_llama_cpp PRIVATE ggml-cpu)
+endif()
 
 # GGML_METAL is a CACHE variable set by ggml's own CMakeLists.txt (via
 # add_subdirectory(third_party/llama.cpp) in the top-level CMakeLists.txt),
 # auto-detected per-platform. We deliberately do not set it ourselves (design
 # spec §7) — we only react to whatever it resolved to.
-if (GGML_METAL)
+if (GGML_METAL AND NOT GGML_BACKEND_DL)
     target_link_libraries(_mineru_llama_cpp PRIVATE ggml-metal)
 endif()
 
@@ -55,18 +75,22 @@ endif()
 # anything. A generator expression is used rather than a hardcoded path, so
 # this keeps working if llama.cpp's internal output-directory layout changes.
 #
-# INSTALL_RPATH is relative (@loader_path/../lib on macOS, $ORIGIN/../lib on
-# Linux) instead, since a wheel's lib/ sits one level up from
-# mineru_llama_cpp/_mineru_llama_cpp.so -- baking in the build-tree absolute
-# path here would make every wheel unusable on any machine other than the
-# one it was built on. This overrides the directory-scoped
-# CMAKE_INSTALL_RPATH set in the top-level CMakeLists.txt, since explicit
-# target properties take precedence -- kept the same value for consistency,
-# but set explicitly since this target's needs are the reason that variable
-# exists.
+# INSTALL_RPATH is relative (@loader_path/lib on macOS, $ORIGIN/lib on
+# Linux) -- no ".." -- since CMAKE_INSTALL_LIBDIR is now
+# "mineru_llama_cpp/lib" (top-level CMakeLists.txt), making lib/ a *sibling*
+# of mineru_llama_cpp/_mineru_llama_cpp.so, not one level up from it as it
+# was when lib/ sat at the wheel root. Baking in the build-tree absolute path
+# here would make every wheel unusable on any machine other than the one it
+# was built on. This overrides the directory-scoped CMAKE_INSTALL_RPATH set
+# in the top-level CMakeLists.txt, since explicit target properties take
+# precedence -- that top-level value (unchanged: $ORIGIN;$ORIGIN/../lib /
+# @loader_path;@loader_path/../lib) is still correct for llama-server and
+# the backend MODULEs, which now live in mineru_llama_cpp/bin/ (one level
+# above mineru_llama_cpp/lib/, same as before) -- only this target's own
+# nesting level changed.
 set_target_properties(_mineru_llama_cpp PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:llama>"
-    INSTALL_RPATH "$<IF:$<BOOL:${APPLE}>,@loader_path/../lib,$ORIGIN/../lib>"
+    INSTALL_RPATH "$<IF:$<BOOL:${APPLE}>,@loader_path/lib,$ORIGIN/lib>"
 )
 
 # Build the extension module directly into the source tree so that

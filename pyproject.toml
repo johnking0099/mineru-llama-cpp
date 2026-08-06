@@ -34,16 +34,23 @@ build-dir = "build"
 # and keep the SONAME. Patterns are version-number-agnostic so they survive a
 # llama.cpp bump. libllama-server-impl is an unversioned single MODULE bundle
 # (looks like a dev symlink but has no chain) -- force-kept via "!" negation.
+#
+# lib/ paths below are prefixed mineru_llama_cpp/lib/ (not top-level lib/):
+# CMAKE_INSTALL_LIBDIR is set to "mineru_llama_cpp/lib" (top-level
+# CMakeLists.txt) so runtime artifacts stay scoped inside the Python package
+# rather than at the wheel root -- see that file's comment for why. include/
+# is unaffected (CMAKE_INSTALL_INCLUDEDIR is untouched, still wheel-root
+# "include/").
 wheel.exclude = [
     "include/**",
-    "lib/cmake/**",
-    "lib/pkgconfig/**",
-    "lib/*.*.*.*.dylib",                 # macOS full-version libX.0.17.0.dylib
-    "lib/*.so.*.*.*",                    # Linux full-version libX.so.0.17.0
-    "lib/*[!0-9].dylib",                 # macOS unversioned dev symlink libX.dylib
-    "lib/*[!0-9].so",                    # Linux unversioned dev symlink libX.so
-    "!lib/libllama-server-impl.dylib",   # keep single-bundle module (macOS)
-    "!lib/libllama-server-impl.so",      # keep single-bundle module (Linux)
+    "mineru_llama_cpp/lib/cmake/**",
+    "mineru_llama_cpp/lib/pkgconfig/**",
+    "mineru_llama_cpp/lib/*.*.*.*.dylib",                 # macOS full-version libX.0.17.0.dylib
+    "mineru_llama_cpp/lib/*.so.*.*.*",                    # Linux full-version libX.so.0.17.0
+    "mineru_llama_cpp/lib/*[!0-9].dylib",                 # macOS unversioned dev symlink libX.dylib
+    "mineru_llama_cpp/lib/*[!0-9].so",                    # Linux unversioned dev symlink libX.so
+    "!mineru_llama_cpp/lib/libllama-server-impl.dylib",   # keep single-bundle module (macOS)
+    "!mineru_llama_cpp/lib/libllama-server-impl.so",      # keep single-bundle module (Linux)
 ]
 
 # Editable install mode "inplace" compiles the extension module directly into
