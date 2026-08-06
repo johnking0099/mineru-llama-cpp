@@ -12,6 +12,7 @@ from typing import AsyncIterator, Iterator
 from ._mineru_llama_cpp import _EngineCore
 from .sampling import SamplingParams
 from .types import GenerateChunk, GenerateResult, GenerationTimings, Messages
+from .verbosity import LOG_LEVEL_WARN
 
 
 def _timings_from_dict(d: dict | None) -> GenerationTimings | None:
@@ -26,14 +27,40 @@ class Engine:
         model: str | Path,
         mmproj: str | Path,
         *,
-        n_ctx: int = 8192,
+        n_ctx_seq: int = 0,
         n_gpu_layers: int = 99,
-        n_parallel: int = 1,
+        n_parallel: int = 4,
+        verbosity: int = LOG_LEVEL_WARN,
+        n_threads: int = -1,
     ) -> None:
         """Loads the model and starts the background decode loop thread.
 
         model/mmproj must be local file paths (no HuggingFace repo id
         auto-download — see design spec §1 "非目标").
+
+        n_ctx_seq: the context length for a *single* slot/sequence (this maps
+            onto llama.cpp's internal n_ctx_seq, "context for a single
+            sequence" -- not the total n_ctx). The total context is derived
+            internally as n_ctx_seq * n_parallel, and the KV cache is
+            hard-partitioned (kv_unified=false) so each slot gets its own
+            private n_ctx_seq cells -- no slot can be starved by its peers.
+            Default 0 means "the model's training context length"
+            (n_ctx_train), so most callers only ever need to tune n_parallel.
+            Values are rounded up to a multiple of 256 to match llama.cpp's
+            own internal padding, keeping the effective per-slot context
+            exactly equal to what's passed here.
+        n_parallel: number of concurrent slots, same as llama.cpp's
+            -np/--parallel. Default 4 matches what llama-server itself
+            resolves to when --parallel is left at its own "auto" default
+            (tools/server/server.cpp). Total KV = n_ctx_seq * n_parallel.
+        verbosity: threshold for llama.cpp's internal logging, using the
+            same LOG_LEVEL_* constants as llama.cpp's own -lv/--verbosity
+            CLI flag (see mineru_llama_cpp.verbosity). Default is
+            LOG_LEVEL_WARN (llama.cpp's own default is LOG_LEVEL_INFO,
+            which is noisier than most embedders want -- pass
+            LOG_LEVEL_INFO explicitly to match llama.cpp's own default).
+        n_threads: CPU threads for generation, same as llama.cpp's
+            -t/--threads. Default -1 auto-detects the usable core count.
         """
         # Set before constructing _core: if _EngineCore(...) raises, __del__
         # on the partially-constructed Engine still finds these attributes
@@ -41,12 +68,41 @@ class Engine:
         # __del__'s try/except, masking the real construction failure).
         self._closed = False
         self._close_lock = threading.Lock()
-        self._core = _EngineCore(str(model), str(mmproj), n_ctx, n_gpu_layers, n_parallel)
+        # Validate at the boundary: a negative n_ctx_seq or a non-positive
+        # n_parallel would otherwise produce a nonsensical total n_ctx (or a
+        # cryptic assert deep inside llama.cpp) rather than a clear error here.
+        # n_ctx_seq == 0 is valid and means "use the model's training context".
+        if n_ctx_seq < 0:
+            raise ValueError(f"n_ctx_seq must be >= 0 (0 = model training context), got {n_ctx_seq}")
+        if n_parallel < 1:
+            raise ValueError(f"n_parallel must be >= 1, got {n_parallel}")
+        # Round a nonzero n_ctx_seq up to a multiple of 256 so it survives
+        # llama.cpp's own GGML_PAD(x, 256) untouched -- otherwise the C++ side
+        # would pad n_ctx/n_parallel internally and the effective per-slot
+        # context would silently differ from what was passed. 0 is left as-is
+        # (the C++ side resolves it to n_ctx_train, itself a multiple of 256).
+        if n_ctx_seq > 0 and n_ctx_seq % 256 != 0:
+            n_ctx_seq = ((n_ctx_seq + 255) // 256) * 256
+        self._core = _EngineCore(
+            str(model), str(mmproj), n_ctx_seq, n_gpu_layers, n_parallel, verbosity, n_threads
+        )
+        # The engine is constructed with special=true (see engine_core.cpp),
+        # which is needed to keep MinerU's structured tokens (<|box_start|>
+        # etc.) intact -- but that also means the chat template's own EOS
+        # token gets rendered as literal text into `content` instead of
+        # being silently dropped, e.g. "...<|im_end|>" trailing the output.
+        # Auto-filling SamplingParams.stop with it (when the caller hasn't
+        # set their own) strips it the same way llama-server would for any
+        # explicit stop string -- see server-context.cpp's
+        # find_stopping_strings()/erase() in process_token().
+        self._eos_token_str: str = self._core.eos_token_str
 
     def _build_body(self, messages: Messages, sampling_params: SamplingParams | None, stream: bool) -> str:
         body: dict = {"model": "mineru-llama-cpp", "messages": messages, "stream": stream}
         if sampling_params is not None:
             body.update(sampling_params.to_json_fields())
+        if "stop" not in body and self._eos_token_str:
+            body["stop"] = [self._eos_token_str]
         return json.dumps(body)
 
     # --- non-streaming ---

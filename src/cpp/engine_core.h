@@ -14,8 +14,17 @@
 
 class EngineCore {
 public:
+    // verbosity/n_threads mirror common_params::verbosity and
+    // common_params::cpuparams.n_threads (common/common.h) -- same names,
+    // same defaults (3 = LOG_LEVEL_INFO, -1 = auto-detect thread count).
+    // n_ctx_seq is the per-slot context length (llama.cpp's internal
+    // n_ctx_seq -- context for a single sequence), NOT the total n_ctx.
+    // 0 means "the model's training context length". Total n_ctx is derived
+    // internally as n_ctx_seq * n_parallel (kv_unified=false, so each slot
+    // gets a private n_ctx_seq-cell stream). See constructor comment.
     EngineCore(const std::string & model_path, const std::string & mmproj_path,
-               int n_ctx, int n_gpu_layers, int n_parallel);
+               int n_ctx_seq, int n_gpu_layers, int n_parallel,
+               int32_t verbosity, int32_t n_threads);
     ~EngineCore();
 
     EngineCore(const EngineCore &) = delete;
@@ -93,9 +102,18 @@ public:
     // May throw std::exception for pre-post errors (see contract above).
     StreamHandle generate_stream(const std::string & body_json);
 
+    // The model's chat-template end token (e.g. "<|im_end|>"), as detokenized
+    // by llama.cpp from the vocab's EOS token id. Empty string if the model
+    // has no EOS token. Used by the Python Engine layer to auto-fill
+    // SamplingParams.stop when the caller doesn't set it -- see design note
+    // on `special=true` in engine_core.cpp: it preserves structured tokens
+    // like <|box_start|> in generated text, but that also means this EOS
+    // token gets rendered as literal text instead of being silently dropped.
+    const std::string & eos_token_str() const { return meta_->eos_token_str; }
+
 private:
     server_context                        ctx_;
-    common_params                          params_;
+    common_params                         params_;
     std::unique_ptr<server_context_meta>  meta_;
     std::thread                           loop_thread_;
     bool                                  started_ = false;

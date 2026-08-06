@@ -5,8 +5,11 @@
 #include "server-schema.h"
 #include "common.h"
 #include "llama.h"
+#include "log.h"
+#include "gguf.h"
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,6 +30,31 @@ std::string map_finish_reason(const std::string & stop_type_str) {
     return "stop";
 }
 
+// Reads the model's training context length ({arch}.context_length) straight
+// from the GGUF metadata, without loading weights. Needed because we default
+// n_ctx_seq to n_ctx_train, but n_ctx (and thus the KV cache) must be sized
+// *before* the model finishes loading -- at which point llama.cpp's own
+// llama_model_n_ctx_train() isn't available yet. Metadata-only parsing
+// (no_alloc, ctx=NULL) is cheap. Returns 0 if the file/key can't be read, so
+// the caller can fall back to llama.cpp's own default handling.
+int read_n_ctx_train_from_gguf(const std::string & model_path) {
+    gguf_init_params gp{ /*.no_alloc =*/ true, /*.ctx =*/ nullptr };
+    gguf_context * ctx = gguf_init_from_file(model_path.c_str(), gp);
+    if (ctx == nullptr) return 0;
+
+    int result = 0;
+    const int64_t arch_id = gguf_find_key(ctx, "general.architecture");
+    if (arch_id >= 0 && gguf_get_kv_type(ctx, arch_id) == GGUF_TYPE_STRING) {
+        const std::string key = std::string(gguf_get_val_str(ctx, arch_id)) + ".context_length";
+        const int64_t ctx_id = gguf_find_key(ctx, key.c_str());
+        if (ctx_id >= 0 && gguf_get_kv_type(ctx, ctx_id) == GGUF_TYPE_UINT32) {
+            result = (int) gguf_get_val_u32(ctx, ctx_id);
+        }
+    }
+    gguf_free(ctx);
+    return result;
+}
+
 EngineCore::Timings extract_timings(const json & j) {
     EngineCore::Timings t;
     if (!j.contains("timings")) return t;
@@ -43,18 +71,68 @@ EngineCore::Timings extract_timings(const json & j) {
 } // namespace
 
 EngineCore::EngineCore(const std::string & model_path, const std::string & mmproj_path,
-                        int n_ctx, int n_gpu_layers, int n_parallel) {
-    params_.model.path         = model_path;
-    params_.mmproj.path        = mmproj_path;
-    params_.n_gpu_layers       = n_gpu_layers;
-    params_.mmproj_use_gpu     = (n_gpu_layers > 0);
-    params_.n_parallel         = n_parallel;
-    params_.n_ctx              = n_ctx;
-    params_.cont_batching      = true;
-    params_.special            = true;
-    params_.sleep_idle_seconds = -1;  // never sleep (else model gets unloaded mid-use)
-    params_.chat_template      = "";  // use the model's own built-in template
-    params_.use_jinja          = true;
+                        int n_ctx_seq, int n_gpu_layers, int n_parallel,
+                        int32_t verbosity, int32_t n_threads) {
+    params_.model.path          = model_path;
+    params_.mmproj.path         = mmproj_path;
+    params_.n_gpu_layers        = n_gpu_layers;
+    params_.mmproj_use_gpu      = (n_gpu_layers > 0);
+    params_.n_parallel          = n_parallel;
+
+    // We expose per-slot context (n_ctx_seq), not llama.cpp's total n_ctx.
+    // n_ctx_seq == 0 means "the model's training context length"; read it
+    // straight from GGUF metadata since llama_model_n_ctx_train() isn't
+    // available until after the model loads (which is too late -- the KV
+    // cache is sized during load). If the read fails, fall back to letting
+    // llama.cpp default n_ctx itself (params_.n_ctx = 0).
+    if (n_ctx_seq == 0) {
+        n_ctx_seq = read_n_ctx_train_from_gguf(model_path);
+    }
+    params_.n_ctx = (n_ctx_seq > 0) ? n_ctx_seq * n_parallel : 0;
+
+    // NOT unified: with kv_unified = false the KV cache is hard-partitioned
+    // into n_parallel private streams of n_ctx / n_parallel cells each. Since
+    // we size n_ctx = n_ctx_seq * n_parallel above, each slot gets exactly
+    // n_ctx_seq cells that no other slot can touch. This makes the
+    // "failed to find a memory slot" failure (a slot starved because its
+    // peers hold the shared pool) structurally impossible: a request either
+    // fits in its own n_ctx_seq (runs, or cleanly stops with finish_reason=
+    // "length" at the cap) or is rejected up front if its prompt alone
+    // exceeds n_ctx_seq -- never a load-dependent mid-batch failure. Total KV
+    // memory is identical to the unified case (n_ctx cells either way); the
+    // only thing that changes is partitioned vs shared. For an offline batch
+    // engine that values predictable stability over letting one request
+    // borrow idle peers' capacity, the hard partition is the right trade.
+    params_.kv_unified          = false;
+    params_.cont_batching       = true;
+    
+    // Engine requests disable prompt reuse, so retaining idle slots only
+    // adds RAM-cache eviction work during offline multi-modal batches.
+    params_.cache_idle_slots    = false;
+    params_.cache_ram_mib       = 0;
+
+    params_.special             = true;
+    params_.sleep_idle_seconds  = -1;  // never sleep (else model gets unloaded mid-use)
+    params_.chat_template       = "";  // use the model's own built-in template
+    params_.use_jinja           = true;
+    params_.verbosity           = verbosity;
+    params_.cpuparams.n_threads = n_threads;
+
+    // common_init() wires llama's own log callback (llama_log_set) through
+    // to common_log -- without it, LLAMA_LOG_DEBUG lines from llama.cpp
+    // internals (e.g. llama_context::set_embeddings) bypass the verbosity
+    // threshold entirely and print unconditionally, same as every llama.cpp
+    // CLI tool calls this before touching the backend (see e.g.
+    // tools/server/server.cpp).
+    common_init();
+    common_log_set_verbosity_thold(params_.verbosity);
+
+    // CLI entry points funnel cpuparams.n_threads through this before it
+    // ever reaches llama_context -- skipping it means -1 ("auto") is never
+    // resolved and silently falls back to GGML_DEFAULT_N_THREADS (4) deep
+    // inside ggml-cpu.c, regardless of how many cores are actually
+    // available.
+    postprocess_cpu_params(params_.cpuparams, nullptr);
 
     llama_backend_init();
     llama_numa_init(params_.numa);

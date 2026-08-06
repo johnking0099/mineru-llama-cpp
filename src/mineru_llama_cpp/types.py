@@ -56,7 +56,7 @@ class GenerateResult:
     finish_reason: Literal["stop", "length"]
     tokens_evaluated: int
     tokens_predicted: int
-    timings: GenerationTimings
+    timings: GenerationTimings | None
 
 
 @dataclass(frozen=True)

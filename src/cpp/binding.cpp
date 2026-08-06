@@ -145,9 +145,10 @@ PYBIND11_MODULE(_mineru_llama_cpp, m) {
         .def("__next__", &PyStreamIterator::next);
 
     py::class_<EngineCore>(m, "_EngineCore")
-        .def(py::init<const std::string &, const std::string &, int, int, int>(),
-             py::arg("model_path"), py::arg("mmproj_path"), py::arg("n_ctx"),
-             py::arg("n_gpu_layers"), py::arg("n_parallel"))
+        .def(py::init<const std::string &, const std::string &, int, int, int, int32_t, int32_t>(),
+             py::arg("model_path"), py::arg("mmproj_path"), py::arg("n_ctx_seq"),
+             py::arg("n_gpu_layers"), py::arg("n_parallel"), py::arg("verbosity"), py::arg("n_threads"))
         .def("generate", &generate_impl, py::arg("body"))
-        .def("generate_stream", &generate_stream_impl, py::arg("body"));
+        .def("generate_stream", &generate_stream_impl, py::arg("body"))
+        .def_property_readonly("eos_token_str", &EngineCore::eos_token_str);
 }
