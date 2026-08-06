@@ -128,6 +128,10 @@ endif()
 # patch is already applied (via --reverse --check) before touching anything,
 # so repeated configure runs don't fail or double-apply.
 file(GLOB LLAMA_CPP_PATCHES "${CMAKE_SOURCE_DIR}/patches/llama.cpp/*.patch")
+# Exclude macOS AppleDouble files (._*.patch) that Finder/certain editors
+# create alongside the real patches -- `git apply` would fail on them
+# otherwise, breaking configure on macOS dev machines.
+list(FILTER LLAMA_CPP_PATCHES EXCLUDE REGEX "/\\._[^/]*\\.patch$")
 list(SORT LLAMA_CPP_PATCHES)
 foreach(patch_file ${LLAMA_CPP_PATCHES})
     get_filename_component(patch_name ${patch_file} NAME)

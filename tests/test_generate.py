@@ -2,14 +2,35 @@
 coverage goal, using non-streaming generate()."""
 
 import base64
+import json
 from pathlib import Path
 
-from mineru_llama_cpp import GenerateResult, SamplingParams
+from mineru_llama_cpp import Engine, GenerateResult, SamplingParams
 
 
 def _image_data_uri(path: Path) -> str:
     data = path.read_bytes()
     return f"data:image/png;base64,{base64.b64encode(data).decode()}"
+
+
+def test_engine_preserves_explicit_grammar():
+    """The wildcard UTF-8 grammar is a default, not an override: a caller
+    who supplies their own "grammar" key (via a SamplingParams-like object
+    whose to_json_fields() returns one) must win over it. See engine.py's
+    _VALID_UNICODE_GRAMMAR comment for why this matters."""
+    assert "grammar" not in SamplingParams.__dataclass_fields__
+    engine = object.__new__(Engine)
+    engine._eos_token_str = ""
+
+    class CustomSamplingParams:
+        @staticmethod
+        def to_json_fields():
+            return {"grammar": 'root ::= "overridden"'}
+
+    body = json.loads(
+        engine._build_body([{"role": "user", "content": "test"}], CustomSamplingParams(), False)  # type: ignore[arg-type]
+    )
+    assert body["grammar"] == 'root ::= "overridden"'
 
 
 def test_generate_text_only(engine):
