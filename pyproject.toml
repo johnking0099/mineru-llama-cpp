@@ -17,7 +17,46 @@ cmake.build-type = "Release"
 wheel.packages = ["src/mineru_llama_cpp"]
 build-dir = "build"
 
+# llama.cpp's own CMakeLists.txt installs C/C++ dev artifacts (headers, CMake
+# package config, pkg-config) alongside the runtime shared libs we actually
+# need. We ship llama-server and the shared libs (runtime deps of
+# _mineru_llama_cpp), but not files meant for compiling against llama.cpp/ggml
+# from source.
+#
+# Each versioned lib is a 3-name symlink chain in the build tree
+# (libggml.dylib -> libggml.0.dylib -> libggml.0.17.0.dylib; on Linux
+# libggml.so -> .so.0 -> .so.0.17.0). scikit-build-core dereferences symlinks
+# and would write all three as full copies -- ~3x bloat. Runtime only needs the
+# SONAME (macOS libX.0.dylib / Linux libX.so.0), which is what our binaries'
+# @rpath/DT_NEEDED entries actually reference. So we exclude:
+#   - the full-version file (>=3 version segments)
+#   - the unversioned dev symlink (link-time only)
+# and keep the SONAME. Patterns are version-number-agnostic so they survive a
+# llama.cpp bump. libllama-server-impl is an unversioned single MODULE bundle
+# (looks like a dev symlink but has no chain) -- force-kept via "!" negation.
+wheel.exclude = [
+    "include/**",
+    "lib/cmake/**",
+    "lib/pkgconfig/**",
+    "lib/*.*.*.*.dylib",                 # macOS full-version libX.0.17.0.dylib
+    "lib/*.so.*.*.*",                    # Linux full-version libX.so.0.17.0
+    "lib/*[!0-9].dylib",                 # macOS unversioned dev symlink libX.dylib
+    "lib/*[!0-9].so",                    # Linux unversioned dev symlink libX.so
+    "!lib/libllama-server-impl.dylib",   # keep single-bundle module (macOS)
+    "!lib/libllama-server-impl.so",      # keep single-bundle module (Linux)
+]
+
+# Editable install mode "inplace" compiles the extension module directly into
+# src/mineru_llama_cpp/ alongside the .pyi stub and py.typed marker, so that
+# type checkers (basedpyright/pyright) find both the stub and the module source
+# in the same directory. The default "redirect" mode installs the .so into
+# site-packages while leaving stubs in src/, which triggers the yellow
+# reportMissingModuleSource warning.
+[tool.scikit-build.editable]
+mode = "inplace"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
+norecursedirs = ["legacy_spike"]

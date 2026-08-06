@@ -1,0 +1,39 @@
+Fix: CLI-tokenized task gets tokenized twice when deferred for a free slot
+
+Base commit: 9a3bf2b84923a85583b4ee8177b0cca13824bb03 (gguf-v0.19.0-1114-g9a3bf2b84)
+
+Root cause: process_single_task() tokenizes task.cli_prompt via
+tokenize_cli_input() and never resets task.cli back to false. If no slot is
+free at that moment, the (already-tokenized) task is moved wholesale into
+queue_tasks_deferred and later re-dequeued into process_single_task() again
+once a slot frees up. Since task.cli is still true, tokenize_cli_input() runs
+a second time -- but task.cli_prompt was already cleared by the first run, so
+the second tokenization produces empty tokens, which the server then treats
+as an "empty prompt" request and returns an empty response with
+stop_type=none.
+
+This only affects the CLI-tokenization path (task.cli = true), used by
+in-process embedders like mineru_llama_cpp's EngineCore that call
+server_context directly without going through the HTTP layer. The normal
+HTTP path tokenizes prompts synchronously in the request-handling thread
+before the task ever reaches the queue, so it never sets task.cli and is
+unaffected -- queuing/deferring behaves correctly there.
+
+Symptom: with N concurrent requests > n_parallel slots, the requests that
+have to wait for a slot to free up return empty content instead of their
+generated text.
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 744593c76..3b0c20a7f 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -2225,6 +2225,9 @@ private:
+             }
+             task.cli_prompt.clear();
+             task.cli_files.clear();
++            task.cli = false; // prevent re-tokenizing an already-cleared cli_prompt if this
++                               // task gets deferred (no free slot) and later re-dequeued --
++                               // process_single_task() re-checks task.cli on every dequeue
+         } catch (const std::exception & e) {
+             send_error(task, std::string("Failed to format input: ") + e.what(), ERROR_TYPE_INVALID_REQUEST);
+             return false;

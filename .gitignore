@@ -1,4 +1,6 @@
 build/
+CMakeCache.txt
+CMakeInit.txt
 *.so
 *.dylib
 __pycache__/
@@ -7,3 +9,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 tests/fixtures/*.png
+
+# in-source CMake/scikit-build-core build artifacts (editable inplace builds
+# leave these in the tree; they are generated, never committed)
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+.cmake/
+.skbuild-info.json
+bin/
