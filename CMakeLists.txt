@@ -22,6 +22,17 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_UI OFF CACHE BOOL "" FORCE)      # skip web UI asset fetch; we never expose HTTP
 set(LLAMA_USE_PREBUILT_UI OFF CACHE BOOL "" FORCE)  # LLAMA_BUILD_UI alone doesn't skip the HF asset download fallback
 
+# Drop the OpenSSL dependency. LLAMA_OPENSSL (default ON) makes vendored
+# cpp-httplib link OpenSSL::SSL/Crypto for HTTPS, which propagates through
+# libllama-common all the way to our _mineru_llama_cpp extension. On the build
+# machine that resolves to a Homebrew-absolute path
+# (/opt/homebrew/opt/openssl@3/...) that won't exist on a user's machine ->
+# "Library not loaded" at import. We only ever load local GGUF paths (no
+# --hf-repo download, see README), so HTTPS is dead weight -- turning it off
+# removes libssl/libcrypto entirely and leaves the wheel depending only on
+# system libraries.
+set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+
 # Every binary and shared library under third_party/llama.cpp links its
 # sibling ggml/llama/mtmd libs via @rpath/$ORIGIN (bare LC_LOAD_DYLIB/DT_NEEDED
 # entries with no baked-in directory). CMAKE_INSTALL_RPATH is a
