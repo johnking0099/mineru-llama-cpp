@@ -14,6 +14,27 @@ from .sampling import SamplingParams
 from .types import GenerateChunk, GenerateResult, GenerationTimings, Messages
 from .verbosity import LOG_LEVEL_WARN
 
+# "any Unicode codepoint, repeated" -- llama.cpp's grammar-constrained sampler
+# decodes each candidate token's bytes and rejects any token that would leave
+# an invalid/incomplete UTF-8 sequence in the output (see llama-grammar.cpp's
+# decode_utf8()/llama_grammar_match_partial_char()). Occasionally (observed on
+# a Q8_0-quantized model, dense/high-resolution pages) the model samples a
+# token that produces a broken multi-byte sequence, which renders as U+FFFD
+# and breaks the downstream peg-native chat-format parser
+# ("The model produced output that does not match the expected ... format").
+# This wildcard grammar doesn't constrain the *structure* of the output
+# (MinerU's <|box_start|> etc. markers and content are still whatever the
+# model produces) -- it only removes the invalid-byte failure mode from the
+# sampling candidate set.
+#
+# Applied in _build_body (below) as a *default*, the same way SamplingParams
+# .stop is defaulted: only set when the caller hasn't already put a "grammar"
+# key in the body. SamplingParams has no grammar field today (see its module
+# docstring), so in practice this is always the effective value -- but if a
+# grammar field is added to SamplingParams later, that value should win over
+# this default rather than being silently overridden by it.
+_VALID_UNICODE_GRAMMAR = "root ::= .*"
+
 
 def _timings_from_dict(d: dict | None) -> GenerationTimings | None:
     if d is None:
@@ -101,6 +122,10 @@ class Engine:
         body: dict = {"model": "mineru-llama-cpp", "messages": messages, "stream": stream}
         if sampling_params is not None:
             body.update(sampling_params.to_json_fields())
+        # Default, not an override -- see _VALID_UNICODE_GRAMMAR's
+        # module-level comment. A future caller-supplied "grammar" would win.
+        if "grammar" not in body:
+            body["grammar"] = _VALID_UNICODE_GRAMMAR
         if "stop" not in body and self._eos_token_str:
             body["stop"] = [self._eos_token_str]
         return json.dumps(body)

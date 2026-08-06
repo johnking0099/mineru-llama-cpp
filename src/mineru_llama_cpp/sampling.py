@@ -11,7 +11,12 @@ canonical field here is the native name).
 Deliberately excluded (not oversights — see design spec §5.2): grammar,
 json_schema, logit_bias, samplers, adaptive_target, adaptive_decay,
 backend_sampling, post_sampling_probs. These are advanced/structured-output
-features orthogonal to basic sampling.
+features orthogonal to basic sampling. Note on `grammar` specifically:
+Engine._build_body() fills the request body's "grammar" key with a wildcard
+UTF-8-validity grammar (see engine.py's _VALID_UNICODE_GRAMMAR) as a
+*default*, applied only when nothing has already set that key -- so if a
+`grammar` field is ever added here, a caller-supplied value takes precedence
+over that default rather than being overridden by it.
 """
 
 from __future__ import annotations
