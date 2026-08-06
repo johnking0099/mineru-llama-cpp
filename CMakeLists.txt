@@ -50,6 +50,16 @@ set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 # MODULEs at runtime without setting GGML_BACKEND_PATH.
 set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
 
+# BUILD_SHARED_LIBS is a hard prerequisite of GGML_BACKEND_DL=ON (ggml's own
+# CMakeLists.txt errors out otherwise). llama.cpp's default is already ON for
+# our target platforms (Linux/macOS -- see BUILD_SHARED_LIBS_DEFAULT in
+# third_party/llama.cpp/CMakeLists.txt: only EMSCRIPTEN/MINGW flip it OFF), so
+# this is functionally redundant on those targets today. Force-setting it
+# anyway makes the DL prerequisite explicit at our level and defends against
+# a future MinGW/Emscripten target or an externally-supplied
+# -DBUILD_SHARED_LIBS=OFF quietly breaking the DL build.
+set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+
 # GGML_NATIVE (llama.cpp's default ON) is incompatible with GGML_BACKEND_DL:
 # on x86_64, ggml/src/ggml-cpu/CMakeLists.txt:374 raises a hard
 # `FATAL_ERROR "GGML_NATIVE is not compatible with GGML_BACKEND_DL"` during
