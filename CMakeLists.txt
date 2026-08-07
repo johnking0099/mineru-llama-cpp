@@ -77,6 +77,26 @@ set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 # portable CPU backend is fine for this library's workload.
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 
+# Turn off OpenMP. ggml-cpu has its own pthread-based threadpool
+# (ggml_threadpool, see ggml-cpu.c) that's the actual workhorse for
+# parallel graph compute; OpenMP is just an alternative *trigger* for the
+# same worker function (ggml_graph_compute_thread) -- the #ifdef
+# GGML_USE_OPENMP branch vs the #else ggml_graph_compute_kickoff() branch
+# both run the same per-thread worker, so turning OpenMP off doesn't
+# serialize execution. Verified empirically on Windows ARM64 (pure CPU,
+# two_step_extract on a 1036x1036 page, 3 runs each): OMP_ON avg 206.3s
+# vs OMP_OFF avg 206.0s, delta -0.1% (within noise, no slowdown).
+#
+# Why turn it off: OpenMP drags in a runtime shared lib (libgomp.so.1 on
+# Linux, libomp140.aarch64.dll on Windows ARM64) that's not otherwise
+# present on user machines -- a wheel that needs it fails to load on
+# minimal systems (confirmed on a Windows ARM64 build: import failed
+# until libomp140.aarch64.dll was located in the VS BuildTools redist
+# dir, which a published wheel can't assume). Dropping OpenMP drops that
+# dependency entirely, making the wheel self-contained. Same class of
+# "release-cleanup" as LLAMA_OPENSSL=OFF / GGML_NATIVE=OFF above.
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+
 # Keep native runtime artifacts scoped inside the Python package directory
 # instead of at the wheel root, so the backend MODULEs (discovered via
 # load_packaged_backends()) and the SONAME libs (found via RPATH) both
