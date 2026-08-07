@@ -17,15 +17,14 @@
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <dlfcn.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #endif
-// TODO(windows): no dladdr() equivalent wired up yet for
-// load_packaged_backends() below -- would need GetModuleHandleExW(
-// GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, ...) + GetModuleFileNameW() to
-// locate this extension's own .pyd, then search for a sibling bin\ (see
-// engine_core_module_anchor()'s comment). Until implemented, Windows builds
-// fall through to ggml's own default search (llama_backend_init()'s
-// ggml_backend_load_all() fallback, executable-dir/cwd only) via
-// load_packaged_backends() below being a no-op on this platform.
+// load_packaged_backends() locates this extension's own module file so it
+// can pass an explicit bin/ directory to ggml_backend_load_all_from_path()
+// -- see that function's comment for why. Linux/macOS use dladdr(); Windows
+// uses GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) +
+// GetModuleFileNameW() on a stable anchor function's address.
 
 using json = nlohmann::ordered_json;
 
@@ -120,6 +119,55 @@ void load_packaged_backends() {
         module_dir / "bin",                                    // wheel: mineru_llama_cpp/bin
         module_dir.parent_path() / "bin",                       // defensive middle case
         module_dir.parent_path().parent_path() / "bin",         // editable inplace: <repo-root>/bin
+    };
+
+    std::error_code ec;
+    for (const auto & candidate : candidates) {
+        if (std::filesystem::is_directory(candidate, ec)) {
+            ggml_backend_load_all_from_path(candidate.string().c_str());
+            return;
+        }
+        ec.clear();
+    }
+}
+#elif defined(_WIN32)
+// Anchor function whose address we pass to GetModuleHandleExW -- the address
+// must live inside this DLL (.pyd), so resolving "what module contains this
+// instruction pointer" gives us a handle to _mineru_llama_cpp.pyd itself.
+// No inline attribute needed on Windows, but the function must be a real,
+// non-static symbol (not optimized away) for its address to be meaningful.
+void engine_core_module_anchor() {}
+
+void load_packaged_backends() {
+    HMODULE hmod = nullptr;
+    // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: look up the module that contains
+    // the given address (here, our anchor function). FLAG_UNCHANGED_REFCOUNT
+    // avoids incrementing the module's refcount (we don't want a FreeLibrary
+    // obligation on ourselves).
+    if (!GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&engine_core_module_anchor),
+            &hmod)) {
+        return;
+    }
+
+    wchar_t path_buf[MAX_PATH];
+    DWORD len = GetModuleFileNameW(hmod, path_buf, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return;  // failed, or path too long (would need dynamic sizing -- rare for our layout)
+    }
+
+    const std::filesystem::path module_dir = std::filesystem::path(std::wstring(path_buf, len)).parent_path();
+
+    // Same three candidate layouts as Linux/macOS -- see the comment there.
+    // ggml_backend_load_all_from_path takes a const char *, so we need the
+    // directory's narrow-string form. std::filesystem::path::string() yields
+    // the system's default codepage (CP_ACP on Windows); for ASCII-only
+    // install paths this is fine, and our directory name "bin" is ASCII.
+    const std::filesystem::path candidates[] = {
+        module_dir / "bin",
+        module_dir.parent_path() / "bin",
+        module_dir.parent_path().parent_path() / "bin",
     };
 
     std::error_code ec;

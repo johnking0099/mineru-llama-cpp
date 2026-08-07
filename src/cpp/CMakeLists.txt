@@ -88,9 +88,13 @@ endif()
 # the backend MODULEs, which now live in mineru_llama_cpp/bin/ (one level
 # above mineru_llama_cpp/lib/, same as before) -- only this target's own
 # nesting level changed.
+#
+# Windows branch leaves INSTALL_RPATH empty: Windows has no $ORIGIN, DLLs
+# resolve via the default search order (loaded-module dir + PATH). See the
+# top-level CMakeLists.txt's CMAKE_INSTALL_RPATH comment for the full story.
 set_target_properties(_mineru_llama_cpp PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:llama>"
-    INSTALL_RPATH "$<IF:$<BOOL:${APPLE}>,@loader_path/lib,$ORIGIN/lib>"
+    INSTALL_RPATH "$<IF:$<BOOL:${APPLE}>,@loader_path/lib,$<IF:$<BOOL:${WIN32}>,,$ORIGIN/lib>>"
 )
 
 # Build the extension module directly into the source tree so that

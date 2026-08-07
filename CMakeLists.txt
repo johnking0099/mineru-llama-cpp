@@ -110,8 +110,19 @@ set(CMAKE_INSTALL_LIBDIR "mineru_llama_cpp/lib" CACHE PATH "" FORCE)
 # bin/llama-server and mineru_llama_cpp/_mineru_llama_cpp.so reaching into
 # lib/ from one level down. Both are added so RPATH resolution works
 # regardless of which directory a given consumer sits in.
+#
+# Windows (else branch below) has no $ORIGIN equivalent -- DLL resolution
+# there uses the default search order (loaded-module's directory, then system
+# dirs, then PATH). Leaving CMAKE_INSTALL_RPATH empty on Windows is
+# intentional: our .pyd and the SONAME DLLs in lib/ resolve via the
+# loaded-module-directory rule, and backend MODULEs are dlopen'd by
+# load_packaged_backends() with an explicit path (no search needed). This is
+# the part most likely to need adjustment after a real Windows build --
+# verify with `dumpbin /dependents` on the installed .pyd.
 if (APPLE)
     set(CMAKE_INSTALL_RPATH "@loader_path;@loader_path/../lib")
+elseif (WIN32)
+    # Windows: no RPATH mechanism; rely on default DLL search + load_packaged_backends().
 else()
     set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib")
 endif()
