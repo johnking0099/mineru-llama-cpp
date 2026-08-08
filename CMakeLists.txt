@@ -77,25 +77,30 @@ set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 # portable CPU backend is fine for this library's workload.
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 
-# Turn off OpenMP. ggml-cpu has its own pthread-based threadpool
-# (ggml_threadpool, see ggml-cpu.c) that's the actual workhorse for
-# parallel graph compute; OpenMP is just an alternative *trigger* for the
-# same worker function (ggml_graph_compute_thread) -- the #ifdef
-# GGML_USE_OPENMP branch vs the #else ggml_graph_compute_kickoff() branch
-# both run the same per-thread worker, so turning OpenMP off doesn't
-# serialize execution. Verified empirically on Windows ARM64 (pure CPU,
-# two_step_extract on a 1036x1036 page, 3 runs each): OMP_ON avg 206.3s
-# vs OMP_OFF avg 206.0s, delta -0.1% (within noise, no slowdown).
+# OpenMP: platform-differential.
 #
-# Why turn it off: OpenMP drags in a runtime shared lib (libgomp.so.1 on
-# Linux, libomp140.aarch64.dll on Windows ARM64) that's not otherwise
-# present on user machines -- a wheel that needs it fails to load on
-# minimal systems (confirmed on a Windows ARM64 build: import failed
-# until libomp140.aarch64.dll was located in the VS BuildTools redist
-# dir, which a published wheel can't assume). Dropping OpenMP drops that
-# dependency entirely, making the wheel self-contained. Same class of
-# "release-cleanup" as LLAMA_OPENSSL=OFF / GGML_NATIVE=OFF above.
-set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+# Linux: keep ON (default). Empirically verified on a Linux x86_64 server
+# (pure CPU, two_step_extract, 10 rounds × 30 images, strict ON/OFF
+# alternation): OMP_ON avg 487s vs OMP_OFF avg 557s -- turning it off costs
+# ~14% throughput. ggml-cpu has its own pthread threadpool (ggml_threadpool)
+# that takes over when OpenMP is off, but on Linux libgomp's OpenMP
+# implementation is measurably faster than the pthread fallback (likely
+# better-tuned sync primitives). The libgomp.so.1 runtime it pulls in is
+# bundled into the wheel (see install logic below) so users don't need it
+# preinstalled.
+#
+# macOS / Windows: force OFF. macOS uses Metal (GPU) as its primary path, so
+# CPU OpenMP isn't worth the libgomp.dylib dependency (which would need
+# Homebrew gcc at build time and bake in a /opt/homebrew path). Windows
+# ARM64 showed zero perf delta (206.3s vs 206.0s, 3 runs each), and dropping
+# OpenMP removes the libomp140.aarch64.dll dependency that otherwise breaks
+# import on machines without VS BuildTools installed.
+if (APPLE OR WIN32)
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+endif()
+# On Linux, GGML_OPENMP defaults to ON (llama.cpp's own default) -- we
+# deliberately do NOT force it, so a builder can still override with
+# -DGGML_OPENMP=OFF if they want a libgomp-free build.
 
 # Keep native runtime artifacts scoped inside the Python package directory
 # instead of at the wheel root, so the backend MODULEs (discovered via

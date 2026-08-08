@@ -117,3 +117,29 @@ install(TARGETS _mineru_llama_cpp DESTINATION mineru_llama_cpp)
 # which would also install a dozen unrelated llama.cpp CLI tools we don't
 # ship (llama-tts, llama-mtmd-cli, llama-fit-params, etc).
 install(TARGETS llama-server-impl LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+# On Linux, GGML_OPENMP=ON (default) makes libggml-base/libggml-cpu link
+# libgomp.so.1 (GNU OpenMP runtime). That lib is part of GCC's runtime but
+# not guaranteed present on minimal user systems (e.g. distroless / slim
+# containers). Bundle it into the wheel alongside the other runtime .so
+# files so the wheel is self-contained: libgomp.so.1 lands in
+# mineru_llama_cpp/lib/, found at runtime via the existing
+# CMAKE_INSTALL_RPATH ($ORIGIN/../lib for bin/, $ORIGIN/lib for the .pyd).
+#
+# Only on Linux: macOS doesn't use OpenMP (forced OFF in top-level
+# CMakeLists.txt); Windows uses libomp140 which is a different story handled
+# elsewhere. find_library looks for the SONAME form (libgomp.so.1) directly,
+# not the versionless dev symlink (libgomp.so) -- that's what gets shipped
+# and what the DT_NEEDED entries actually reference.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GGML_OPENMP_ENABLED)
+    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1 gomp.1)
+    if (LIBGOMP_RUNTIME)
+        install(FILES "${LIBGOMP_RUNTIME}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        message(STATUS "Bundling libgomp: ${LIBGOMP_RUNTIME}")
+    else()
+        message(WARNING "GGML_OPENMP is ON but libgomp.so.1 was not found -- "
+                "the wheel will depend on the system's libgomp.so.1 at "
+                "runtime. Install libgomp1 / libgomp on the build machine "
+                "to bundle it.")
+    endif()
+endif()
