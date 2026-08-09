@@ -210,16 +210,21 @@ endforeach()
 
 add_subdirectory(third_party/llama.cpp)
 
-# Diagnose OpenMP state right after ggml is configured, at top-level scope
-# where we can see everything ggml set. This is also where we locate
-# libgomp.so.1 for bundling into the Linux wheel -- doing it here (not in
-# src/cpp) avoids subdirectory variable-scope issues: GGML_OPENMP_ENABLED
-# is CACHE INTERNAL (visible everywhere), OpenMP_FOUND is a plain variable
-# (scoped to ggml/src, NOT visible here), and TARGET OpenMP::OpenMP_CXX is
-# a GLOBAL imported target (visible everywhere). We use the target check as
-# the most reliable signal.
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET OpenMP::OpenMP_CXX)
-    message(STATUS "OpenMP: ENABLED on Linux, locating libgomp.so.1 for bundling")
+# Bundle libgomp.so.1 into the Linux wheel. Done at top-level scope (after
+# add_subdirectory(third_party/llama.cpp)) so ggml's OpenMP state is visible.
+#
+# Why GGML_OPENMP_ENABLED (not TARGET OpenMP::OpenMP_CXX or OpenMP_FOUND):
+# ggml/src/CMakeLists.txt sets GGML_OPENMP_ENABLED as CACHE INTERNAL -- the
+# only form that's truly globally visible across CMake's subdirectory scopes.
+# OpenMP_FOUND is a plain variable scoped to ggml/src (doesn't propagate up).
+# TARGET OpenMP::OpenMP_CXX is an imported target created in ggml/src; its
+# default scope is NOT global (IMPORTED_GLOBAL defaults to false in CMake
+# 3.x), so it's invisible at top-level -- confirmed empirically: the wheel
+# build's isolated configure logged "OpenMP: not enabled... target check
+# failed" even though ggml had linked OpenMP. GGML_OPENMP_ENABLED doesn't
+# have that problem.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GGML_OPENMP_ENABLED)
+    message(STATUS "OpenMP: ENABLED on Linux (GGML_OPENMP_ENABLED), locating libgomp.so.1 for bundling")
     find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1
                  PATHS /usr/lib /lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
                        /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu
@@ -237,7 +242,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET OpenMP::OpenMP_CXX)
                 "to bundle it.")
     endif()
 else()
-    message(STATUS "OpenMP: not enabled on this platform (Linux+target check failed), skipping libgomp bundling")
+    message(STATUS "OpenMP: not enabled (GGML_OPENMP_ENABLED=${GGML_OPENMP_ENABLED}, platform=${CMAKE_SYSTEM_NAME}), skipping libgomp bundling")
 endif()
 
 add_subdirectory(src/cpp)
