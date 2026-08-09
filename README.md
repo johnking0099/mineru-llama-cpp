@@ -157,6 +157,31 @@ Both produce the same `Engine` API; `n_gpu_layers` (default 99, meaning
 compiled in. On a CPU-only build llama.cpp just logs a warning and runs on
 CPU — no code branches on which backend is active.
 
+### OpenMP (libgomp) — bundled in the Linux wheel, not needed on system
+
+OpenMP is platform-differential (see the top-level `CMakeLists.txt`):
+- **Linux**: `GGML_OPENMP` defaults to ON (llama.cpp's own default), kept ON
+  because libgomp's OpenMP implementation is measurably faster than ggml's
+  pthread fallback on Linux (~14% throughput on pure-CPU two-step extraction,
+  10 rounds × 30 images, strict ON/OFF alternation). The `libgomp.so.1`
+  runtime it pulls in is **bundled into the wheel** (resolved from its
+  symlink target and installed as a real file under `mineru_llama_cpp/lib/`,
+  found at runtime via `$ORIGIN/lib` RPATH) — so users don't need libgomp
+  preinstalled on the system. Verified in a `python:3.12-slim` container
+  with no system libgomp: `import mineru_llama_cpp` succeeds using only the
+  bundled copy.
+- **macOS**: forced OFF. Metal (GPU) is the primary path; macOS has no
+  libgomp anyway (it's a Linux/gcc runtime), and the alternative (Homebrew
+  gcc's libgomp.dylib) would bake in a `/opt/homebrew/...` path.
+- **Windows**: forced OFF. Zero perf delta measured on ARM64, and dropping
+  OpenMP removes the `libomp140.aarch64.dll` dependency that otherwise
+  breaks `import` on machines without Visual Studio BuildTools installed.
+
+If you're building from source on Linux and want a libgomp-free wheel (e.g.
+for an environment where you can't bundle it), pass
+`-DGGML_OPENMP=OFF` in `SKBUILD_CMAKE_ARGS` — ggml's pthread threadpool
+takes over, at the ~14% throughput cost.
+
 ### Verifying the build
 
 Before running anything at scale, confirm the engine loads and generates:
