@@ -131,13 +131,22 @@ install(TARGETS llama-server-impl LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 # elsewhere. find_library looks for the SONAME form (libgomp.so.1) directly,
 # not the versionless dev symlink (libgomp.so) -- that's what gets shipped
 # and what the DT_NEEDED entries actually reference.
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GGML_OPENMP_ENABLED)
-    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1 gomp.1)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND OpenMP_FOUND)
+    # OpenMP_FOUND is set by find_package(OpenMP) in ggml/src/CMakeLists.txt
+    # (globally visible CACHE variable). find_library searches for the SONAME
+    # form directly -- CMake's NAMES accepts full filenames, and libgomp.so.1
+    # is what DT_NEEDED entries reference (not the versionless dev symlink
+    # libgomp.so). Searched in the standard multiarch locations.
+    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1
+                 PATHS /usr/lib /lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+                       /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu
+                 NO_DEFAULT_PATH)
+    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1)
     if (LIBGOMP_RUNTIME)
         install(FILES "${LIBGOMP_RUNTIME}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
         message(STATUS "Bundling libgomp: ${LIBGOMP_RUNTIME}")
     else()
-        message(WARNING "GGML_OPENMP is ON but libgomp.so.1 was not found -- "
+        message(WARNING "OpenMP is ON but libgomp.so.1 was not found -- "
                 "the wheel will depend on the system's libgomp.so.1 at "
                 "runtime. Install libgomp1 / libgomp on the build machine "
                 "to bundle it.")
