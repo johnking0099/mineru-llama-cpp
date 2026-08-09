@@ -118,37 +118,7 @@ install(TARGETS _mineru_llama_cpp DESTINATION mineru_llama_cpp)
 # ship (llama-tts, llama-mtmd-cli, llama-fit-params, etc).
 install(TARGETS llama-server-impl LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
-# On Linux, GGML_OPENMP=ON (default) makes libggml-base/libggml-cpu link
-# libgomp.so.1 (GNU OpenMP runtime). That lib is part of GCC's runtime but
-# not guaranteed present on minimal user systems (e.g. distroless / slim
-# containers). Bundle it into the wheel alongside the other runtime .so
-# files so the wheel is self-contained: libgomp.so.1 lands in
-# mineru_llama_cpp/lib/, found at runtime via the existing
-# CMAKE_INSTALL_RPATH ($ORIGIN/../lib for bin/, $ORIGIN/lib for the .pyd).
-#
-# Only on Linux: macOS doesn't use OpenMP (forced OFF in top-level
-# CMakeLists.txt); Windows uses libomp140 which is a different story handled
-# elsewhere. find_library looks for the SONAME form (libgomp.so.1) directly,
-# not the versionless dev symlink (libgomp.so) -- that's what gets shipped
-# and what the DT_NEEDED entries actually reference.
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND OpenMP_FOUND)
-    # OpenMP_FOUND is set by find_package(OpenMP) in ggml/src/CMakeLists.txt
-    # (globally visible CACHE variable). find_library searches for the SONAME
-    # form directly -- CMake's NAMES accepts full filenames, and libgomp.so.1
-    # is what DT_NEEDED entries reference (not the versionless dev symlink
-    # libgomp.so). Searched in the standard multiarch locations.
-    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1
-                 PATHS /usr/lib /lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
-                       /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu
-                 NO_DEFAULT_PATH)
-    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1)
-    if (LIBGOMP_RUNTIME)
-        install(FILES "${LIBGOMP_RUNTIME}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
-        message(STATUS "Bundling libgomp: ${LIBGOMP_RUNTIME}")
-    else()
-        message(WARNING "OpenMP is ON but libgomp.so.1 was not found -- "
-                "the wheel will depend on the system's libgomp.so.1 at "
-                "runtime. Install libgomp1 / libgomp on the build machine "
-                "to bundle it.")
-    endif()
-endif()
+# libgomp.so.1 bundling for Linux is handled in the top-level CMakeLists.txt
+# (after add_subdirectory(third_party/llama.cpp)) -- it needs top-level scope
+# to reliably see ggml's OpenMP state (OpenMP::OpenMP_CXX imported target).
+# See that file for the find_library + install(FILES) logic.

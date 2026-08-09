@@ -209,4 +209,35 @@ foreach(patch_file ${LLAMA_CPP_PATCHES})
 endforeach()
 
 add_subdirectory(third_party/llama.cpp)
+
+# Diagnose OpenMP state right after ggml is configured, at top-level scope
+# where we can see everything ggml set. This is also where we locate
+# libgomp.so.1 for bundling into the Linux wheel -- doing it here (not in
+# src/cpp) avoids subdirectory variable-scope issues: GGML_OPENMP_ENABLED
+# is CACHE INTERNAL (visible everywhere), OpenMP_FOUND is a plain variable
+# (scoped to ggml/src, NOT visible here), and TARGET OpenMP::OpenMP_CXX is
+# a GLOBAL imported target (visible everywhere). We use the target check as
+# the most reliable signal.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET OpenMP::OpenMP_CXX)
+    message(STATUS "OpenMP: ENABLED on Linux, locating libgomp.so.1 for bundling")
+    find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1
+                 PATHS /usr/lib /lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+                       /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu
+                 NO_DEFAULT_PATH)
+    if (NOT LIBGOMP_RUNTIME)
+        find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1)
+    endif()
+    if (LIBGOMP_RUNTIME)
+        message(STATUS "Bundling libgomp: ${LIBGOMP_RUNTIME}")
+        install(FILES "${LIBGOMP_RUNTIME}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    else()
+        message(WARNING "OpenMP is ON but libgomp.so.1 was not found -- "
+                "the wheel will depend on the system's libgomp.so.1 at "
+                "runtime. Install libgomp1 / libgomp on the build machine "
+                "to bundle it.")
+    endif()
+else()
+    message(STATUS "OpenMP: not enabled on this platform (Linux+target check failed), skipping libgomp bundling")
+endif()
+
 add_subdirectory(src/cpp)
