@@ -233,8 +233,17 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GGML_OPENMP_ENABLED)
         find_library(LIBGOMP_RUNTIME NAMES libgomp.so.1)
     endif()
     if (LIBGOMP_RUNTIME)
-        message(STATUS "Bundling libgomp: ${LIBGOMP_RUNTIME}")
-        install(FILES "${LIBGOMP_RUNTIME}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        # libgomp.so.1 is typically a symlink to libgomp.so.1.0.0 on Linux.
+        # install(FILES) on a symlink records the link path, but scikit-build-core
+        # doesn't preserve symlinks pointing outside the staging tree when
+        # packing the wheel archive -- so the file never makes it into the
+        # .whl. Resolve to the real file and install it under the SONAME name
+        # as a regular file (file(REAL_PATH) requires CMake 3.19+).
+        file(REAL_PATH "${LIBGOMP_RUNTIME}" LIBGOMP_REALPATH)
+        message(STATUS "Bundling libgomp: ${LIBGOMP_RUNTIME} -> ${LIBGOMP_REALPATH} (installed as libgomp.so.1)")
+        install(FILES "${LIBGOMP_REALPATH}"
+                DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                RENAME "libgomp.so.1")
     else()
         message(WARNING "OpenMP is ON but libgomp.so.1 was not found -- "
                 "the wheel will depend on the system's libgomp.so.1 at "
