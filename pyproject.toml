@@ -14,7 +14,6 @@ test = ["pytest>=7.0", "pytest-asyncio>=0.23", "pillow"]
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-cmake.generator = "Ninja"
 wheel.packages = ["src/mineru_llama_cpp"]
 build-dir = "build"
 
