@@ -4,6 +4,18 @@ project(mineru_llama_cpp CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# MSVC on non-English Windows uses the system codepage (e.g. GBK/936 on
+# Chinese Windows) to interpret source files. llama.cpp's source contains
+# UTF-8 encoded comments/strings whose multi-byte sequences can be
+# misinterpreted as control characters (e.g. newlines), causing
+# "error C2001: 常量中有换行符" (newline in constant) and cascading C2146
+# syntax errors. /utf-8 tells MSVC to treat both source and execution
+# charset as UTF-8, matching what GCC/clang do by default. Applied before
+# add_subdirectory(third_party/llama.cpp) so it covers all ggml/llama targets.
+if (MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # --- llama.cpp submodule: force-enable only what we need ---
 #
 # LLAMA_STANDALONE becomes OFF when llama.cpp is included via
