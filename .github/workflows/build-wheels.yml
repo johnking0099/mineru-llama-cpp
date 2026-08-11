@@ -62,7 +62,11 @@ jobs:
           path: wheelhouse/*.whl
 
   build_macos_x86_64:
-    runs-on: macos-13
+    # macos-13 (Intel) runners are scarce and queue for a long time on
+    # GHA. macos-14 (Apple Silicon) runners are plentiful; cibuildwheel
+    # uses Rosetta 2 to run x86_64 Python and build x86_64 wheels
+    # natively (not cross-compile — the binaries are real x86_64).
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
