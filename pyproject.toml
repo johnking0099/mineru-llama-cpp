@@ -100,13 +100,16 @@ manylinux-aarch64-image = "manylinux_2_34"
 # Vulkan deps come from AlmaLinux 9's own appstream repo (no LunarG repo
 # needed — LunarG only publishes apt .list files, not yum/dnf .repo files).
 # - vulkan-headers + vulkan-loader-devel: headers and libvulkan.so symlink
-# - glslc: SPIR-V shader compiler (part of shaderc, in appstream since EL9)
-# CMake's FindVulkan needs glslc to compile the Vulkan backend MODULE's
-# embedded shaders at configure time — headers alone aren't enough.
+# - glslc: SPIR-V shader compiler (part of shaderc; FindVulkan component)
+# - glslang: provides glslangValidator (optional FindVulkan component;
+#   silences the "missing components: glslangValidator" warning)
+# - spirv-headers-devel: provides SPIRV-HeadersConfig.cmake, which
+#   ggml-vulkan/CMakeLists.txt:14's find_package(SPIRV-Headers CONFIG
+#   REQUIRED) needs — without it the configure step fails.
 # git is needed for the patches/llama.cpp/*.patch auto-apply step in the
 # top-level CMakeLists.txt (uses `git apply`).
 environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
-before-all = "yum install -y git vulkan-headers vulkan-loader-devel glslc"
+before-all = "yum install -y git vulkan-headers vulkan-loader-devel glslc glslang spirv-headers-devel"
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
@@ -123,11 +126,15 @@ archs = ["arm64"]
 # treats the .exe as a self-extracting archive and just unpacks the files).
 # VULKAN_SDK env var lets CMake's FindVulkan locate headers + libs + glslc
 # (under $VULKAN_SDK/Bin). 7-Zip is preinstalled on GHA Windows runners.
+# Note: before-all runs via cmd /c on Windows (cibuildwheel), not PowerShell
+# — single quotes are passed literally to native commands, which broke
+# curl's URL parsing (exit 3 = URL malformed). Use double quotes for args
+# that need quoting; URL and -o<dir> don't need quotes (no spaces).
 # Disable delvewheel — our DLLs are already in bin/ and lib/ inside the
 # wheel, and __init__.py adds those to the DLL search path via
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
 environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK" }
-before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe 'https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe?Human=true' && 7z x vulkan_sdk.exe -o'C:\\VulkanSDK'"
+before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && 7z x vulkan_sdk.exe -oC:\\VulkanSDK"
 archs = ["AMD64"]
