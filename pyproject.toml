@@ -107,6 +107,11 @@ archs = ["arm64"]
 # and puts the .pyd in a Release/ subdirectory, which Python can't find.
 # /utf-8 is already in CMakeLists.txt (handles non-English Windows).
 # Vulkan SDK not installed in CI yet — build is CPU-only. Can add later.
+# Disable delvewheel — our DLLs are already in bin/ and lib/ inside the
+# wheel, and __init__.py adds those to the DLL search path via
+# os.add_dll_directory(). delvewheel can't find them during its scan
+# (it only looks next to the .pyd), so it errors out.
+repair-command = ""
 environment = { CMAKE_GENERATOR = "Ninja" }
 before-all = "pip install ninja"
 archs = ["AMD64"]
