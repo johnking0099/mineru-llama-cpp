@@ -1,0 +1,80 @@
+name: Build wheels
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build_linux_x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
+      - name: Build wheels (Linux x86_64, CPU+Vulkan)
+        run: cibuildwheel --output-dir wheelhouse --archs x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x86_64
+          path: wheelhouse/*.whl
+
+  build_linux_aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
+      - name: Build wheels (Linux aarch64, CPU+Vulkan)
+        run: cibuildwheel --output-dir wheelhouse --archs aarch64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-aarch64
+          path: wheelhouse/*.whl
+
+  build_macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
+      - name: Build wheels (macOS arm64, Metal)
+        run: cibuildwheel --output-dir wheelhouse --archs arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos
+          path: wheelhouse/*.whl
+
+  build_windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
+      - name: Build wheels (Windows AMD64, CPU)
+        run: cibuildwheel --output-dir wheelhouse --archs AMD64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows
+          path: wheelhouse/*.whl

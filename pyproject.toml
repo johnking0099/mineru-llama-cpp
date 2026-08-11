@@ -67,3 +67,48 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
 norecursedirs = ["legacy_spike"]
+
+# --- cibuildwheel: cross-platform wheel building ---
+#
+# Builds 4 wheels per Python version (3.10–3.13) = 16 total:
+#   macOS arm64 (Metal)    — no extra flags, Metal auto-detected
+#   Linux x86_64 (Vulkan)  — vulkan-headers + vulkan-loader-devel installed
+#   Linux aarch64 (Vulkan) — same, native arm64 runner
+#   Windows x86_64 (CPU)   — CMAKE_GENERATOR=Ninja (avoids VS multi-config
+#                            Release/ subdirectory issue), /utf-8 is already
+#                            in CMakeLists.txt. Vulkan SDK not installed in
+#                            CI yet — CPU backend works, Vulkan can be added
+#                            later.
+#
+# Tests are skipped (need GGUF model files, not available in CI).
+# The patch auto-application (patches/llama.cpp/*.patch) requires git in
+# the build container — installed via before-all.
+
+[tool.cibuildwheel]
+build = "cp310-cp313-*"
+build-frontend = "build"
+test-skip = "*"
+
+[tool.cibuildwheel.linux]
+environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
+before-all = "yum install -y epel-release && yum install -y vulkan-headers vulkan-loader-devel git"
+
+[tool.cibuildwheel.linux.aarch64]
+# Native arm64 runner (ubuntu-24.04-arm). Same Vulkan setup as x86_64.
+environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
+before-all = "yum install -y epel-release && yum install -y vulkan-headers vulkan-loader-devel git"
+
+[tool.cibuildwheel.macos]
+# Metal is auto-detected on Apple Silicon. No extra flags.
+# x86_64 (Intel Mac) is skipped — Metal doesn't work on Intel, per the
+# platform matrix decision.
+archs = ["arm64"]
+
+[tool.cibuildwheel.windows]
+# Force Ninja generator — Visual Studio generator (default) is multi-config
+# and puts the .pyd in a Release/ subdirectory, which Python can't find.
+# /utf-8 is already in CMakeLists.txt (handles non-English Windows).
+# Vulkan SDK not installed in CI yet — build is CPU-only. Can add later.
+environment = { CMAKE_GENERATOR = "Ninja" }
+before-all = "pip install ninja"
+archs = ["AMD64"]
