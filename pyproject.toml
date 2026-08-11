@@ -90,13 +90,16 @@ build-frontend = "build"
 test-skip = "*"
 
 [tool.cibuildwheel.linux]
-# Vulkan backend requires glslc (SPIR-V shader compiler), which is not
-# available in manylinux_2_28's package repos. For now, build CPU-only
-# Linux wheels. With GGML_BACKEND_DL=ON, users can build Vulkan from
-# source if needed. TODO: install Vulkan SDK tarball in CI to enable
-# Vulkan in the published Linux wheels.
-environment = { SKBUILD_CMAKE_ARGS = "" }
-before-all = "yum install -y epel-release && yum install -y git"
+# Install Vulkan SDK from LunarG repo — provides glslc (SPIR-V shader
+# compiler, required by CMake's FindVulkan to build the Vulkan backend
+# MODULE's shaders). vulkan-headers/vulkan-loader-devel alone don't
+# include glslc (it's part of Shaderc, not the Vulkan loader package).
+environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
+before-all = """yum install -y epel-release && \
+yum install -y git && \
+curl -s https://packages.lunarg.com/lunarg-signing-key-pub.asc > /etc/pki/rpm-gpg/RPM-GPG-KEY-lunarg && \
+curl -s -o /etc/yum.repos.d/lunarg-vulkan.repo https://packages.lunarg.com/vulkan/lunarg-vulkan-el8.repo && \
+yum install -y vulkan-sdk"""
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
@@ -108,12 +111,13 @@ archs = ["arm64"]
 # Force Ninja generator — Visual Studio generator (default) is multi-config
 # and puts the .pyd in a Release/ subdirectory, which Python can't find.
 # /utf-8 is already in CMakeLists.txt (handles non-English Windows).
-# Vulkan SDK not installed in CI yet — build is CPU-only. Can add later.
+# Vulkan SDK installed via before-all (provides glslc + headers, same as
+# what we did on the Windows laptop).
 # Disable delvewheel — our DLLs are already in bin/ and lib/ inside the
 # wheel, and __init__.py adds those to the DLL search path via
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
-environment = { CMAKE_GENERATOR = "Ninja" }
-before-all = "pip install ninja"
+environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK" }
+before-all = "pip install ninja && curl -sL -o C:\\vulkansdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe && C:\\vulkansdk.exe --accept-licenses --default-root=C:\\VulkanSDK --silent"
 archs = ["AMD64"]
