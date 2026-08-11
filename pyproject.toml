@@ -161,6 +161,6 @@ archs = ["arm64"]
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
-environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK" }
+environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK", SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
 before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && 7z x vulkan_sdk.exe -oC:\\VulkanSDK"
 archs = ["AMD64"]
