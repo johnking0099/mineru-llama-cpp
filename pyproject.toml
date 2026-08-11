@@ -103,7 +103,7 @@ environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
 before-all = """yum install -y epel-release && \
 yum install -y git && \
 curl -s https://packages.lunarg.com/lunarg-signing-key-pub.asc > /etc/pki/rpm-gpg/RPM-GPG-KEY-lunarg && \
-curl -s -o /etc/yum.repos.d/lunarg-vulkan.repo https://packages.lunarg.com/vulkan/lunarg-vulkan-el8.repo && \
+curl -s -o /etc/yum.repos.d/lunarg-vulkan.repo https://packages.lunarg.com/vulkan/lunarg-vulkan-el9.repo && \
 yum install -y vulkan-sdk"""
 
 [tool.cibuildwheel.macos]
@@ -116,13 +116,13 @@ archs = ["arm64"]
 # Force Ninja generator — Visual Studio generator (default) is multi-config
 # and puts the .pyd in a Release/ subdirectory, which Python can't find.
 # /utf-8 is already in CMakeLists.txt (handles non-English Windows).
-# Vulkan SDK installed via before-all (provides glslc + headers, same as
-# what we did on the Windows laptop).
+# Vulkan SDK installed via chocolatey (LunarG's installer doesn't support
+# silent install flags on CI). Provides glslc + Vulkan headers.
 # Disable delvewheel — our DLLs are already in bin/ and lib/ inside the
 # wheel, and __init__.py adds those to the DLL search path via
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
-environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK" }
-before-all = "pip install ninja && curl -sL -o C:\\vulkansdk.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe && C:\\vulkansdk.exe --accept-licenses --default-root=C:\\VulkanSDK --silent"
+environment = { CMAKE_GENERATOR = "Ninja" }
+before-all = "pip install ninja && choco install vulkansdk -y --no-progress"
 archs = ["AMD64"]
