@@ -88,6 +88,11 @@ norecursedirs = ["legacy_spike"]
 build = "cp310-* cp311-* cp312-* cp313-*"
 build-frontend = "build"
 test-skip = "*"
+# manylinux_2_34 (glibc 2.34) — llama.cpp's vendored subprocess.h uses
+# posix_spawn_file_actions_addchdir_np, which requires glibc >= 2.29.
+# manylinux_2_28 (glibc 2.28) doesn't have it.
+manylinux-x86_64-image = "manylinux_2_34"
+manylinux-aarch64-image = "manylinux_2_34"
 
 [tool.cibuildwheel.linux]
 # Install Vulkan SDK from LunarG repo — provides glslc (SPIR-V shader
