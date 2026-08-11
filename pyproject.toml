@@ -162,5 +162,5 @@ archs = ["arm64"]
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
 environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK", SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
-before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && 7z x vulkan_sdk.exe -oC:\\VulkanSDK"
+before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && 7z x vulkan_sdk.exe -oC:\\VulkanSDK && dir C:\\VulkanSDK && dir C:\\VulkanSDK\\Include\\vulkan 2>&1 || true && dir C:\\VulkanSDK\\Lib 2>&1 || true"
 archs = ["AMD64"]
