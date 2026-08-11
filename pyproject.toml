@@ -88,10 +88,9 @@ norecursedirs = ["legacy_spike"]
 
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-*"
-# Skip musllinux (Alpine) — MinerU's user base is on glibc systems
-# (Ubuntu/CentOS/Fedora). Skipping musllinux also simplifies the
-# ISA-level tag handling below (musllinux has its own tag namespace).
-skip = "*-musllinux*"
+# musllinux (Alpine) — included since some MinerU users run Alpine-based
+# containers. musllinux has its own platform tag namespace, and auditwheel
+# auto-detects the right tag (musllinux_1_2_x86_64 etc).
 build-frontend = "build"
 test-skip = "*"
 # manylinux_2_34 (glibc 2.34) — llama.cpp's vendored subprocess.h uses
@@ -99,6 +98,8 @@ test-skip = "*"
 # manylinux_2_28 (glibc 2.28) doesn't have it.
 manylinux-x86_64-image = "manylinux_2_34"
 manylinux-aarch64-image = "manylinux_2_34"
+musllinux-x86_64-image = "musllinux_1_2"
+musllinux-aarch64-image = "musllinux_1_2"
 
 [tool.cibuildwheel.linux]
 # Vulkan deps come from AlmaLinux 9's own appstream repo (no LunarG repo
