@@ -163,4 +163,18 @@ archs = ["arm64"]
 repair-wheel-command = ""
 environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK", SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
 before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && .\\vulkan_sdk.exe -t C:\\VulkanSDK --accept-licenses --default-answer --confirm-command install"
-archs = ["AMD64"]
+archs = ["AMD64", "ARM64"]
+
+# ARM64 cross-compiled from amd64 host. llama.cpp's ggml-cpu rejects MSVC on
+# ARM (CMakeLists.txt:106: "MSVC is not supported for ARM, use clang"), so
+# use clang-cl — which GHA Windows runners ship in VS's LLVM component.
+# Vulkan is skipped on ARM64 for now (LunarG SDK's ARM64 vulkan-1.lib is
+# not on the standard x64 SDK; can revisit later if ARM64 GPU accel is
+# needed — ARM64 Windows devices mostly have weak iGPUs anyway).
+# OpenMP is OFF on ARM64 because ggml-cpu's ARM OpenMP path is untested
+# here and libomp ARM64 isn't in the wheel.
+[[tool.cibuildwheel.overrides]]
+select = "cp*-win_arm64"
+inherit = { "environment" = "replace", "before-all" = "replace" }
+environment = { CMAKE_GENERATOR = "Ninja", CC = "clang-cl", CXX = "clang-cl", SKBUILD_CMAKE_ARGS = "-DGGML_OPENMP=OFF" }
+before-all = "pip install ninja"

@@ -73,7 +73,12 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          # amd64_arm64 sets up both the host (amd64) and the ARM64
+          # cross-compiler — cl.exe can target either. The x64 wheel uses
+          # plain cl; the ARM64 wheel uses clang-cl (gated by the
+          # [[tool.cibuildwheel.overrides]] block in pyproject.toml,
+          # since llama.cpp's ggml-cpu rejects MSVC on ARM).
+          arch: amd64_arm64
       - name: Install cibuildwheel
         run: pip install cibuildwheel
       - name: Build wheels (Windows AMD64, CPU)
