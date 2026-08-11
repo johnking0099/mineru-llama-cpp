@@ -176,5 +176,5 @@ archs = ["AMD64", "ARM64"]
 [[tool.cibuildwheel.overrides]]
 select = "cp*-win_arm64"
 inherit = { "environment" = "none", "before-all" = "none" }
-environment = { CMAKE_GENERATOR = "Ninja", CC = "clang-cl", CXX = "clang-cl", SKBUILD_CMAKE_ARGS = "-DGGML_OPENMP=OFF" }
+environment = { CMAKE_GENERATOR = "Ninja", SKBUILD_CMAKE_ARGS = "-DCMAKE_C_COMPILER=clang-cl;-DCMAKE_CXX_COMPILER=clang-cl;-DGGML_OPENMP=OFF" }
 before-all = "pip install ninja"
