@@ -111,7 +111,7 @@ archs = ["arm64"]
 # wheel, and __init__.py adds those to the DLL search path via
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
-repair-command = ""
+repair-wheel-command = ""
 environment = { CMAKE_GENERATOR = "Ninja" }
 before-all = "pip install ninja"
 archs = ["AMD64"]
