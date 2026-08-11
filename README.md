@@ -29,6 +29,30 @@ Key build decisions (all in top-level `CMakeLists.txt`):
   OFF on macOS/Windows (zero benefit, removes libomp/libgomp dependency)
 - `BUILD_SHARED_LIBS=ON` — prerequisite for `GGML_BACKEND_DL`
 
+## CI wheels
+
+Push to `main` (or a `v*` tag) triggers
+[`build-wheels.yml`](.github/workflows/build-wheels.yml), which builds
+16 wheels via cibuildwheel — 4 Python versions × 4 platforms:
+
+| Platform | Wheel tag | Backend | Size |
+|---|---|---|---|
+| macOS arm64 | `macosx_11_0_arm64` | Metal | 4.9 MB |
+| Linux x86_64 | `manylinux_2_34_x86_64` | Vulkan + CPU | 22 MB |
+| Linux aarch64 | `manylinux_2_34_aarch64` | Vulkan + CPU | 21 MB |
+| Windows x86_64 | `win_amd64` | Vulkan + CPU | 6.6–8.7 MB |
+
+Each Linux wheel bundles `libgomp.so.1` (OpenMP runtime) and the Vulkan
+loader, so users don't need to preinstall them. The Linux x86_64 wheel
+requires an x86_64-v3 CPU (AVX2/FMA/BMI2/F16C) — ggml-cpu enables these
+by default at compile time. `auditwheel repair --disable-isa-ext-check`
+bypasses the v1-baseline ISA audit; the wheel tag stays plain
+`manylinux_2_34_x86_64` for pip compatibility, matching how numpy/scipy
+ship v3-requiring wheels.
+
+musllinux (Alpine) wheels are skipped — MinerU's user base is on glibc
+systems, and skipping musllinux simplifies the ISA-tag handling.
+
 ## Install (development)
 
 ```bash
