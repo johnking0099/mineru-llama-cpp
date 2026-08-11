@@ -175,6 +175,6 @@ archs = ["AMD64", "ARM64"]
 # here and libomp ARM64 isn't in the wheel.
 [[tool.cibuildwheel.overrides]]
 select = "cp*-win_arm64"
-inherit = { "environment" = "replace", "before-all" = "replace" }
+inherit = { "environment" = "none", "before-all" = "none" }
 environment = { CMAKE_GENERATOR = "Ninja", CC = "clang-cl", CXX = "clang-cl", SKBUILD_CMAKE_ARGS = "-DGGML_OPENMP=OFF" }
 before-all = "pip install ninja"
