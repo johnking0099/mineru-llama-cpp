@@ -139,12 +139,14 @@ archs = ["arm64"]
 # Force Ninja generator — Visual Studio generator (default) is multi-config
 # and puts the .pyd in a Release/ subdirectory, which Python can't find.
 # /utf-8 is already in CMakeLists.txt (handles non-English Windows).
-# Force MSVC (cl.exe) instead of the MinGW that GHA runners ship in PATH —
+# MSVC compiler setup is handled by the ilammy/msvc-dev-cmd@v1 GHA action
+# in .github/workflows/build-wheels.yml, which calls vcvars64.bat and adds
+# the MSVC bin directory to PATH before cibuildwheel spawns the build.
+# This avoids the MinGW compiler that GHA Windows runners ship in PATH —
 # MinGW-compiled DLLs depend on libgcc_s_seh-1.dll, libstdc++-6.dll,
-# libwinpthread-1.dll, which are NOT on end-user machines. MSVC links
-# against vcruntime140.dll/msvcp140.dll, which the Python interpreter
-# already ships (so no extra runtime dependency). vcpkg/VC++ Redistributable
-# is not required because Python 3.10+ wheels include the UCRT.
+# libwinpthread-1.dll, none of which are on end-user machines. MSVC-built
+# DLLs link against vcruntime140.dll/msvcp140.dll, which the Python
+# interpreter already ships, so no extra runtime dependency is added.
 # Vulkan SDK: download the official .exe from sdk.lunarg.com and extract
 # with 7z (the NSIS installer doesn't support silent install flags; 7z
 # treats the .exe as a self-extracting archive and just unpacks the files).
@@ -159,6 +161,6 @@ archs = ["arm64"]
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
-environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK", CC = "cl.exe", CXX = "cl.exe" }
+environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK" }
 before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && 7z x vulkan_sdk.exe -oC:\\VulkanSDK"
 archs = ["AMD64"]
