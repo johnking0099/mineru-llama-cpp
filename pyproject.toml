@@ -130,6 +130,14 @@ before-build = "rm -rf build"
 # ship v3-requiring wheels under plain manylinux tags.
 repair-wheel-command = "auditwheel repair --disable-isa-ext-check -w {dest_dir} {wheel}"
 
+# musllinux (Alpine) — same Vulkan deps via apk instead of yum. Package
+# names differ: spirv-headers-devel (EL) → spirv-headers (Alpine); rest
+# match. shaderc provides glslc on Alpine.
+[[tool.cibuildwheel.overrides]]
+select = "cp*-musllinux_*"
+inherit = { "before-all" = "none" }
+before-all = "apk add --no-cache git vulkan-headers vulkan-loader-dev shaderc glslang spirv-headers"
+
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
 # x86_64 (Intel Mac) is built on a separate macos-13 runner — Metal
