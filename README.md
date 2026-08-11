@@ -33,25 +33,40 @@ Key build decisions (all in top-level `CMakeLists.txt`):
 
 Push to `main` (or a `v*` tag) triggers
 [`build-wheels.yml`](.github/workflows/build-wheels.yml), which builds
-16 wheels via cibuildwheel — 4 Python versions × 4 platforms:
+28 wheels via cibuildwheel — 4 Python versions × 7 platform/arch combos:
 
-| Platform | Wheel tag | Backend | Size |
+| Platform | Wheel tag | Backend | Runner |
 |---|---|---|---|
-| macOS arm64 | `macosx_11_0_arm64` | Metal | 4.9 MB |
-| Linux x86_64 | `manylinux_2_34_x86_64` | Vulkan + CPU | 22 MB |
-| Linux aarch64 | `manylinux_2_34_aarch64` | Vulkan + CPU | 21 MB |
-| Windows x86_64 | `win_amd64` | Vulkan + CPU | 6.6–8.7 MB |
+| macOS arm64 | `macosx_11_0_arm64` | Metal + CPU | macos-latest (Apple Silicon) |
+| macOS x86_64 | `macosx_10_15_x86_64` | CPU only | macos-14 + Rosetta 2 |
+| Linux x86_64 (glibc) | `manylinux_2_34_x86_64` | Vulkan + CPU | ubuntu-latest |
+| Linux aarch64 (glibc) | `manylinux_2_34_aarch64` | Vulkan + CPU | ubuntu-24.04-arm |
+| Linux x86_64 (musl) | `musllinux_1_2_x86_64` | CPU only | ubuntu-latest |
+| Linux aarch64 (musl) | `musllinux_1_2_aarch64` | CPU only | ubuntu-24.04-arm |
+| Windows x86_64 | `win_amd64` | Vulkan + CPU | windows-latest (MSVC) |
+| Windows arm64 | `win_arm64` | CPU only | windows-11-arm (clang-cl) |
 
 Each Linux wheel bundles `libgomp.so.1` (OpenMP runtime) and the Vulkan
-loader, so users don't need to preinstall them. The Linux x86_64 wheel
-requires an x86_64-v3 CPU (AVX2/FMA/BMI2/F16C) — ggml-cpu enables these
-by default at compile time. `auditwheel repair --disable-isa-ext-check`
+loader, so users don't need to preinstall them. The Linux x86_64 glibc
+wheel requires an x86_64-v3 CPU (AVX2/FMA/BMI2/F16C) — ggml-cpu enables
+these by default at compile time. `auditwheel repair --disable-isa-ext-check`
 bypasses the v1-baseline ISA audit; the wheel tag stays plain
 `manylinux_2_34_x86_64` for pip compatibility, matching how numpy/scipy
 ship v3-requiring wheels.
 
-musllinux (Alpine) wheels are skipped — MinerU's user base is on glibc
-systems, and skipping musllinux simplifies the ISA-tag handling.
+musllinux (Alpine) wheels are CPU-only because Alpine's shaderc 2024.4
+fails to optimize ggml-vulkan's SPIR-V shaders (VUID-StandaloneSpirv-
+None-10684). glibc-based Linux wheels include the Vulkan backend.
+
+macOS x86_64 wheels are CPU-only because Apple deprecated Metal on
+Intel Macs; the wheel ships no `libggml-metal.dylib`. macOS arm64
+wheels include Metal by default.
+
+Windows x86_64 uses MSVC (`ilammy/msvc-dev-cmd` GHA action + QtIF
+silent install for LunarG Vulkan SDK). Windows arm64 uses `clang-cl`
+on a native `windows-11-arm` runner — llama.cpp's ggml-cpu rejects
+MSVC on ARM (CMakeLists.txt:106), so the override forces clang-cl
+which VS's LLVM component provides.
 
 ## Install (development)
 
