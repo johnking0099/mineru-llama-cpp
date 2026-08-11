@@ -88,6 +88,10 @@ norecursedirs = ["legacy_spike"]
 
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-*"
+# Skip musllinux (Alpine) — MinerU's user base is on glibc systems
+# (Ubuntu/CentOS/Fedora). Skipping musllinux also simplifies the
+# ISA-level tag handling below (musllinux has its own tag namespace).
+skip = "*-musllinux*"
 build-frontend = "build"
 test-skip = "*"
 # manylinux_2_34 (glibc 2.34) — llama.cpp's vendored subprocess.h uses
@@ -110,6 +114,17 @@ manylinux-aarch64-image = "manylinux_2_34"
 # top-level CMakeLists.txt (uses `git apply`).
 environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
 before-all = "yum install -y git vulkan-headers vulkan-loader-devel glslc glslang spirv-headers-devel"
+# Clean the build directory before each Python version's build. scikit-build-core's
+# build-dir = "build" reuses the same path across Python versions; llama.cpp's
+# vulkan-shaders-gen ExternalProject (BUILD_ALWAYS TRUE) doesn't tolerate this —
+# its stamps end up inconsistent on the 2nd+ build, and ninja fails with
+# "no such file or directory" trying to cd into a non-existent build subdir.
+before-build = "rm -rf build"
+# Tag x86_64 wheels as manylinux_2_34_x86_64_v3 — ggml-cpu enables AVX2/FMA/
+# BMI2/F16C by default (all v3 instructions). The default manylinux_2_34_x86_64
+# tag requires only v1 (SSE2); auditwheel detects the binary's v2+ minimum and
+# refuses to repair. aarch64 has no ISA-level tags, uses default manylinux_2_34_aarch64.
+repair-wheel-command = "bash -c 'if [ \"$(uname -m)\" = x86_64 ]; then PLAT=manylinux_2_34_x86_64_v3; else PLAT=manylinux_2_34_$(uname -m); fi && auditwheel repair --plat $PLAT -w {dest_dir} {wheel}'"
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
