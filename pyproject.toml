@@ -144,7 +144,7 @@ archs = ["arm64", "x86_64"]
 [[tool.cibuildwheel.overrides]]
 select = "cp*-macosx_x86_64"
 inherit = { "environment" = "none", "before-all" = "none" }
-environment = { SKBUILD_CMAKE_ARGS = "-DGGML_METAL=OFF" }
+environment = { SKBUILD_CMAKE_ARGS = "-DGGML_METAL=OFF", MACOSX_DEPLOYMENT_TARGET = "10.15" }
 before-all = "brew install ninja"
 
 [tool.cibuildwheel.windows]
