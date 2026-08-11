@@ -94,7 +94,7 @@ test-skip = "*"
 # git for the patch auto-application (patches/llama.cpp/*.patch).
 # Same setup for both x86_64 and aarch64.
 environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
-before-all = "yum install -y epel-release && yum install -y vulkan-headers vulkan-loader-devel git"
+before-all = "yum install -y epel-release && yum install -y vulkan-headers vulkan-loader-devel glslang git"
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
