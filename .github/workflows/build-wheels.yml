@@ -73,17 +73,36 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          # amd64_arm64 sets up both the host (amd64) and the ARM64
-          # cross-compiler — cl.exe can target either. The x64 wheel uses
-          # plain cl; the ARM64 wheel uses clang-cl (gated by the
-          # [[tool.cibuildwheel.overrides]] block in pyproject.toml,
-          # since llama.cpp's ggml-cpu rejects MSVC on ARM).
-          arch: amd64_arm64
+          arch: x64
       - name: Install cibuildwheel
         run: pip install cibuildwheel
-      - name: Build wheels (Windows AMD64, CPU)
+      - name: Build wheels (Windows AMD64, CPU+Vulkan)
         run: cibuildwheel --output-dir wheelhouse --archs AMD64
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows
+          name: wheels-windows-amd64
+          path: wheelhouse/*.whl
+
+  build_windows_arm64:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Setup MSVC dev environment (ARM64 native)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
+      - name: Build wheels (Windows ARM64, CPU)
+        # ggml-cpu rejects MSVC on ARM — use clang-cl via the override
+        # block in pyproject.toml. Vulkan is skipped on ARM64.
+        run: cibuildwheel --output-dir wheelhouse --archs ARM64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-arm64
           path: wheelhouse/*.whl
