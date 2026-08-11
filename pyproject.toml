@@ -90,11 +90,13 @@ build-frontend = "build"
 test-skip = "*"
 
 [tool.cibuildwheel.linux]
-# Vulkan headers + loader-devel for building the Vulkan backend MODULE.
-# git for the patch auto-application (patches/llama.cpp/*.patch).
-# Same setup for both x86_64 and aarch64.
-environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
-before-all = "yum install -y epel-release && yum install -y vulkan-headers vulkan-loader-devel glslang git"
+# Vulkan backend requires glslc (SPIR-V shader compiler), which is not
+# available in manylinux_2_28's package repos. For now, build CPU-only
+# Linux wheels. With GGML_BACKEND_DL=ON, users can build Vulkan from
+# source if needed. TODO: install Vulkan SDK tarball in CI to enable
+# Vulkan in the published Linux wheels.
+environment = { SKBUILD_CMAKE_ARGS = "" }
+before-all = "yum install -y epel-release && yum install -y git"
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
