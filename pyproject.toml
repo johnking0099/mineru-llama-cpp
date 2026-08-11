@@ -131,9 +131,21 @@ repair-wheel-command = "auditwheel repair --disable-isa-ext-check -w {dest_dir} 
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
-# x86_64 (Intel Mac) is skipped — Metal doesn't work on Intel, per the
-# platform matrix decision.
-archs = ["arm64"]
+# x86_64 (Intel Mac) is built on a separate macos-13 runner — Metal
+# doesn't work on Intel, so the x86_64 wheel is CPU-only (no Metal
+# backend in the wheel). The arm64 wheel includes Metal; the x86_64
+# wheel doesn't, and ggml-cpu handles all inference.
+archs = ["arm64", "x86_64"]
+
+# Intel Mac build — disable Metal backend (it doesn't work on Intel,
+# per upstream llama.cpp Metal issue tracker, and adds wheel bloat).
+# ggml-cpu handles all inference; CPU backend is sufficient on Intel
+# Macs which are old hardware at this point anyway.
+[[tool.cibuildwheel.overrides]]
+select = "cp*-macosx_x86_64"
+inherit = { "environment" = "none", "before-all" = "none" }
+environment = { SKBUILD_CMAKE_ARGS = "-DGGML_METAL=OFF" }
+before-all = "brew install ninja"
 
 [tool.cibuildwheel.windows]
 # Force Ninja generator — Visual Studio generator (default) is multi-config
