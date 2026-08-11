@@ -72,13 +72,15 @@ norecursedirs = ["legacy_spike"]
 #
 # Builds 4 wheels per Python version (3.10–3.13) = 16 total:
 #   macOS arm64 (Metal)    — no extra flags, Metal auto-detected
-#   Linux x86_64 (Vulkan)  — vulkan-headers + vulkan-loader-devel installed
+#   Linux x86_64 (Vulkan)  — vulkan-headers + vulkan-loader-devel + glslc
+#                            from AlmaLinux 9 appstream repo (no LunarG repo
+#                            needed; LunarG only publishes apt .list files).
 #   Linux aarch64 (Vulkan) — same, native arm64 runner
-#   Windows x86_64 (CPU)   — CMAKE_GENERATOR=Ninja (avoids VS multi-config
-#                            Release/ subdirectory issue), /utf-8 is already
-#                            in CMakeLists.txt. Vulkan SDK not installed in
-#                            CI yet — CPU backend works, Vulkan can be added
-#                            later.
+#   Windows x86_64 (Vulkan) — SDK downloaded from sdk.lunarg.com and 7z-
+#                             extracted to C:\VulkanSDK (NSIS installer doesn't
+#                             support silent install flags). CMAKE_GENERATOR=
+#                             Ninja avoids VS multi-config Release/ subdir
+#                             issue; /utf-8 is already in CMakeLists.txt.
 #
 # Tests are skipped (need GGUF model files, not available in CI).
 # The patch auto-application (patches/llama.cpp/*.patch) requires git in
@@ -95,16 +97,16 @@ manylinux-x86_64-image = "manylinux_2_34"
 manylinux-aarch64-image = "manylinux_2_34"
 
 [tool.cibuildwheel.linux]
-# Install Vulkan SDK from LunarG repo — provides glslc (SPIR-V shader
-# compiler, required by CMake's FindVulkan to build the Vulkan backend
-# MODULE's shaders). vulkan-headers/vulkan-loader-devel alone don't
-# include glslc (it's part of Shaderc, not the Vulkan loader package).
+# Vulkan deps come from AlmaLinux 9's own appstream repo (no LunarG repo
+# needed — LunarG only publishes apt .list files, not yum/dnf .repo files).
+# - vulkan-headers + vulkan-loader-devel: headers and libvulkan.so symlink
+# - glslc: SPIR-V shader compiler (part of shaderc, in appstream since EL9)
+# CMake's FindVulkan needs glslc to compile the Vulkan backend MODULE's
+# embedded shaders at configure time — headers alone aren't enough.
+# git is needed for the patches/llama.cpp/*.patch auto-apply step in the
+# top-level CMakeLists.txt (uses `git apply`).
 environment = { SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
-before-all = """yum install -y epel-release && \
-yum install -y git && \
-curl -s https://packages.lunarg.com/lunarg-signing-key-pub.asc > /etc/pki/rpm-gpg/RPM-GPG-KEY-lunarg && \
-curl -s -o /etc/yum.repos.d/lunarg-vulkan.repo https://packages.lunarg.com/vulkan/lunarg-vulkan-el9.repo && \
-yum install -y vulkan-sdk"""
+before-all = "yum install -y git vulkan-headers vulkan-loader-devel glslc"
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
@@ -116,13 +118,16 @@ archs = ["arm64"]
 # Force Ninja generator — Visual Studio generator (default) is multi-config
 # and puts the .pyd in a Release/ subdirectory, which Python can't find.
 # /utf-8 is already in CMakeLists.txt (handles non-English Windows).
-# Vulkan SDK installed via chocolatey (LunarG's installer doesn't support
-# silent install flags on CI). Provides glslc + Vulkan headers.
+# Vulkan SDK: download the official .exe from sdk.lunarg.com and extract
+# with 7z (the NSIS installer doesn't support silent install flags; 7z
+# treats the .exe as a self-extracting archive and just unpacks the files).
+# VULKAN_SDK env var lets CMake's FindVulkan locate headers + libs + glslc
+# (under $VULKAN_SDK/Bin). 7-Zip is preinstalled on GHA Windows runners.
 # Disable delvewheel — our DLLs are already in bin/ and lib/ inside the
 # wheel, and __init__.py adds those to the DLL search path via
 # os.add_dll_directory(). delvewheel can't find them during its scan
 # (it only looks next to the .pyd), so it errors out.
 repair-wheel-command = ""
-environment = { CMAKE_GENERATOR = "Ninja" }
-before-all = "pip install ninja && choco install vulkansdk -y --no-progress"
+environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK" }
+before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe 'https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe?Human=true' && 7z x vulkan_sdk.exe -o'C:\\VulkanSDK'"
 archs = ["AMD64"]
