@@ -5,10 +5,34 @@ In-process llama.cpp VLM inference engine for MinerU, exposing a single
 Wraps a pinned build of [llama.cpp](https://github.com/ggml-org/llama.cpp)
 (no HTTP layer, no subprocess) via pybind11.
 
+## Status
+
+**Verified on 4 platforms** (build + import + text generate + two-step
+document extraction):
+
+| Platform | Backend | Two-step extract | Notes |
+|---|---|---|---|
+| macOS arm64 (Apple Silicon) | Metal | 7.3s / page | 6.4x faster than CPU |
+| macOS arm64 | CPU | 47.1s / page | Fallback |
+| Linux x86_64 (NVIDIA GPU) | Vulkan | ~16s / page | OpenMP ON + libgomp bundled |
+| Windows x86_64 | CPU | 241.5s / page | OpenMP OFF |
+| Windows x86_64 | Vulkan (Intel UHD) | 378.3s / page | Weak iGPU — CPU faster |
+| Windows arm64 | CPU (clang-cl) | 208.8s / page | MSVC rejects ARM; clang-cl required |
+
+Key build decisions (all in top-level `CMakeLists.txt`):
+- `GGML_BACKEND_DL=ON` — backends are dlopen'd MODULEs, not hard-linked;
+  missing GPU loaders (e.g. no `libvulkan.so.1`) gracefully fall back to CPU
+- `LLAMA_OPENSSL=OFF` — drops OpenSSL/libssl/libcrypto dependency
+- `GGML_NATIVE=OFF` — portable binaries (no `-march=native`); required for
+  `GGML_BACKEND_DL` on x86 anyway
+- `GGML_OPENMP` — ON on Linux (14% faster, libgomp bundled in wheel),
+  OFF on macOS/Windows (zero benefit, removes libomp/libgomp dependency)
+- `BUILD_SHARED_LIBS=ON` — prerequisite for `GGML_BACKEND_DL`
+
 ## Install (development)
 
 ```bash
-git clone --recurse-submodules <this-repo-url>
+git clone --recurse-submodules https://github.com/johnking0099/mineru-llama-cpp.git
 cd mineru-llama-cpp
 pip install --no-build-isolation -e .
 pip install -e ".[test]"
@@ -25,10 +49,12 @@ convert it once with llama.cpp's own tooling. Both tools come with the
 llama.cpp submodule; `llama-quantize` is also shipped in this package's
 `bin/` directory after a build.
 
-> The commands below were reconstructed from the conversion method used
-> during development and verified against each tool's actual `--help`
-> flags — they are not a verbatim transcript of the original run. Paths use
-> `MinerU2.5-Pro-2605-1.2B` as the example; adjust to your model.
+Pre-built Q8_0 GGUF files are available on
+[ModelScope](https://www.modelscope.cn/models/jinzhenj/MinerU2.5-Pro-2605-1.2B-GGUF):
+`MinerU2.5-Pro-2605-1.2B-Q8_0.gguf` (main model, 506MB) and
+`mmproj-MinerU2.5-Pro-2605-1.2B-Q8_0.gguf` (mmproj, 677MB).
+
+To convert from safetensors yourself:
 
 **Main model** — convert to a BF16 GGUF, then quantize from that BF16 file
 with `llama-quantize`:
@@ -98,262 +124,104 @@ Images go in `content` as `{"type": "image_url", "image_url": {"url": "data:imag
 `docs/superpowers/specs/2026-08-03-mineru-llama-cpp-engine-design.md` §6 for
 why).
 
-## Linux deployment
+### Engine parameters
 
-The project has been developed and tested on macOS (Metal backend). It has
-no hosted git remote — moving it to a Linux machine means copying the
-working tree directly rather than `git clone`-ing from a URL. This section
-covers what changes on Linux and how to bring the project over.
+| Parameter | Default | Description |
+|---|---|---|
+| `n_ctx_seq` | 0 (= model training context) | Per-slot context length. Total KV = `n_ctx_seq × n_parallel`. |
+| `n_gpu_layers` | 99 | Layers to offload to GPU. Set 0 to force CPU. |
+| `n_parallel` | 4 | Concurrent slots. Tune to available GPU memory / CPU cores. |
+| `verbosity` | LOG_LEVEL_WARN | Log threshold (LOG_LEVEL_INFO for backend info). |
+| `n_threads` | -1 (= auto) | CPU threads. |
 
-### Copying the project to the target machine
+### Batch inference
 
-There's no remote to `git clone` from, so bring the directory over as-is
-(tar, rsync, scp — anything that preserves the tree). The one thing that
-must survive the copy is git metadata: the top-level `CMakeLists.txt`
-auto-applies `patches/llama.cpp/*.patch` via `git apply` before building
-(see the "Apply patches" block in that file), and that requires
-`third_party/llama.cpp` to still be a real git checkout with its `.git`
-metadata intact — not just the working-tree files. A plain `.git`-inclusive
-copy handles this correctly:
+```python
+from mineru_llama_cpp import Engine
+from mineru_vl_utils import MinerUClient
 
-```bash
-# from the machine that has the working tree
-tar --exclude=build --exclude='*.so' -czf mineru-llama-cpp.tar.gz mineru-llama-cpp/
-
-# on the target Linux machine
-tar -xzf mineru-llama-cpp.tar.gz
-cd mineru-llama-cpp
+with Engine(model_path, mmproj_path, n_parallel=8) as engine:
+    client = MinerUClient(backend="llama-cpp-engine", llama_cpp_engine=engine)
+    results = client.batch_two_step_extract(images)
 ```
 
-(`tar` includes `.git` and `third_party/llama.cpp/.git` by default — don't
-add `--exclude=.git`.) The target machine needs `git` installed for the
-patch-application step to run during CMake configure, even though nothing
-is being cloned from a remote.
+`batch_two_step_extract` dispatches requests concurrently across the
+engine's slots (`batching_mode="concurrent"`).
 
-If you'd rather clone properly: push this repo to any git host you control,
-then on the target machine `git clone --recurse-submodules <url>` (recurse
-is required so `third_party/llama.cpp` comes down populated, not as an
-empty directory).
+## Cross-platform deployment
 
-### Building with CUDA vs. CPU-only
-
-The build supports both without any code changes — `GGML_CUDA` is a
-standard llama.cpp CMake option that defaults to `OFF`. Toggle it through
-`scikit-build-core`'s standard `SKBUILD_CMAKE_ARGS` environment variable
-(no `pyproject.toml` changes needed):
+### Linux
 
 ```bash
-# GPU build (requires the CUDA Toolkit installed on the target machine;
-# first build takes noticeably longer than CPU-only, since llama.cpp's CUDA
-# kernels get compiled)
-SKBUILD_CMAKE_ARGS="-DGGML_CUDA=ON" uv pip install --no-build-isolation -e .
+# Standard build (CPU + Vulkan via GGML_BACKEND_DL, OpenMP ON)
+uv pip install --no-build-isolation -e .
 
-# CPU-only build (no flag needed — this is the default)
+# Or with Vulkan explicitly:
+SKBUILD_CMAKE_ARGS="-DGGML_VULKAN=ON" uv pip install --no-build-isolation -e .
+
+# CUDA:
+SKBUILD_CMAKE_ARGS="-DGGML_CUDA=ON" uv pip install --no-build-isolation -e .
+```
+
+With `GGML_BACKEND_DL=ON`, the Vulkan backend is a dlopen'd MODULE — if
+`libvulkan.so.1` is missing, the engine gracefully falls back to CPU
+without crashing. The `libgomp.so.1` OpenMP runtime is bundled into the
+wheel (under `mineru_llama_cpp/lib/`), so users don't need it
+preinstalled.
+
+### Windows
+
+```bash
+# Requires MSVC Build Tools + vcvars64 in PATH
+set CMAKE_GENERATOR=Ninja
 uv pip install --no-build-isolation -e .
 ```
 
-Both produce the same `Engine` API; `n_gpu_layers` (default 99, meaning
-"put everything on the GPU") is honored by whichever backend actually got
-compiled in. On a CPU-only build llama.cpp just logs a warning and runs on
-CPU — no code branches on which backend is active.
-
-### OpenMP (libgomp) — bundled in the Linux wheel, not needed on system
-
-OpenMP is platform-differential (see the top-level `CMakeLists.txt`):
-- **Linux**: `GGML_OPENMP` defaults to ON (llama.cpp's own default), kept ON
-  because libgomp's OpenMP implementation is measurably faster than ggml's
-  pthread fallback on Linux (~14% throughput on pure-CPU two-step extraction,
-  10 rounds × 30 images, strict ON/OFF alternation). The `libgomp.so.1`
-  runtime it pulls in is **bundled into the wheel** (resolved from its
-  symlink target and installed as a real file under `mineru_llama_cpp/lib/`,
-  found at runtime via `$ORIGIN/lib` RPATH) — so users don't need libgomp
-  preinstalled on the system. Verified in a `python:3.12-slim` container
-  with no system libgomp: `import mineru_llama_cpp` succeeds using only the
-  bundled copy.
-- **macOS**: forced OFF. Metal (GPU) is the primary path; macOS has no
-  libgomp anyway (it's a Linux/gcc runtime), and the alternative (Homebrew
-  gcc's libgomp.dylib) would bake in a `/opt/homebrew/...` path.
-- **Windows**: forced OFF. Zero perf delta measured on ARM64, and dropping
-  OpenMP removes the `libomp140.aarch64.dll` dependency that otherwise
-  breaks `import` on machines without Visual Studio BuildTools installed.
-
-If you're building from source on Linux and want a libgomp-free wheel (e.g.
-for an environment where you can't bundle it), pass
-`-DGGML_OPENMP=OFF` in `SKBUILD_CMAKE_ARGS` — ggml's pthread threadpool
-takes over, at the ~14% throughput cost.
-
-### Verifying the build
-
-Before running anything at scale, confirm the engine loads and generates:
+On Windows x86_64, MSVC compiles ggml-cpu directly. On Windows ARM64,
+`ggml-cpu/CMakeLists.txt` rejects MSVC — use `clang-cl` instead:
 
 ```bash
-.venv/bin/python -c "
+set SKBUILD_CMAKE_ARGS=-DCMAKE_C_COMPILER=clang-cl;-DCMAKE_CXX_COMPILER=clang-cl
+```
+
+The `__init__.py` adds `bin/` to the DLL search path via
+`os.add_dll_directory()` — Windows has no RPATH (`$ORIGIN`), so this is
+needed for the `.pyd` to find its sibling DLLs.
+
+On older Intel UHD iGPUs (pre-2020, 24-32 EU), Vulkan may be **slower**
+than CPU for small models. Set `n_gpu_layers=0` to force CPU.
+
+### macOS
+
+No special flags needed — Metal is auto-detected. Use Q8_0 models (BF16
+crashes on Metal). OpenMP is OFF (Metal GPU is the primary path).
+
+## Build configuration
+
+All build decisions are in the top-level `CMakeLists.txt` as forced cache
+variables. The `patches/llama.cpp/*.patch` files are auto-applied during
+CMake configure via `git apply` (requires the submodule to be a real git
+checkout).
+
+### OpenMP (libgomp) — platform-differential
+
+- **Linux**: ON (default). ~14% faster than pthread fallback. `libgomp.so.1`
+  bundled in the wheel as a real file (symlink resolved via `file(REAL_PATH)`).
+  Verified in a `python:3.12-slim` container with no system libgomp.
+- **macOS**: OFF. Metal is primary path; no libgomp on macOS.
+- **Windows**: OFF. Zero perf delta on ARM64; removes `libomp140` dependency.
+
+## Verifying the build
+
+```bash
+python -c "
 from mineru_llama_cpp import Engine
 with Engine('/path/to/model.gguf', '/path/to/mmproj.gguf') as engine:
     print(engine.generate([{'role': 'user', 'content': 'hello'}]).content)
 "
 ```
 
-or run the existing test suite (`pytest`, after pointing `tests/conftest.py`'s
-`MODEL`/`MMPROJ` constants at paths that exist on the target machine — they
-default to this project's development machine's paths).
-
-### Batch inference starting point
-
-For running a large image set (e.g. an OmniDocBench-style accuracy pass)
-through this engine, the pieces to combine are:
-
-```python
-from mineru_llama_cpp import Engine
-from mineru_vl_utils import MinerUClient
-
-# n_parallel: tune to available GPU memory / CPU cores -- concurrent
-# requests share one unified KV cache pool across all slots, not a fixed
-# per-slot split (see Engine's n_ctx/n_parallel docstring)
-with Engine(model_path, mmproj_path, n_parallel=8) as engine:
-    client = MinerUClient(backend="llama-cpp-engine", llama_cpp_engine=engine)
-    results = client.batch_two_step_extract(images)  # list[Image.Image] -> list[ExtractResult]
-```
-
-`batch_two_step_extract` dispatches requests concurrently across the
-engine's slots (see `mineru_vl_utils`'s `LlamaCppEngineVlmClient`, backend
-`"llama-cpp-engine"`, `batching_mode="concurrent"`). Wiring this up against
-a specific dataset layout (e.g. OmniDocBench's directory structure) and
-scoring against ground truth is outside this library's scope — that's
-where an existing OmniDocBench evaluation script takes over.
-
-### Linux validation checklist (first-time bring-up)
-
-This project has only ever been built and run on macOS (Metal). Everything
-Linux-related below is **unverified on real hardware** — the code paths
-exist and pass static review, but no one has run them on a Linux box yet.
-Work through this checklist on the target Linux server (has an NVIDIA GPU,
-so the Vulkan loader is present) and record the outcome of each step. Do
-them in order; a later step assuming an earlier one passed.
-
-Prerequisites on the target machine: `git`, CMake, a C++17 compiler, Python
-3.10–3.13, the Vulkan SDK/headers (build-time) — plus the NVIDIA driver's
-Vulkan loader (already there on a GPU box). You also need the GGUF model +
-mmproj files present locally (see "Preparing GGUF models" above); note their
-paths, referred to below as `$MODEL` and `$MMPROJ`.
-
-**Step 1 — CPU-only build succeeds and the patch auto-applies.**
-```bash
-uv pip install --no-build-isolation -e . 2>&1 | tee /tmp/build-cpu.log
-grep -i "llama.cpp patch" /tmp/build-cpu.log   # optional: confirm patch step ran
-python -c "from mineru_llama_cpp import Engine; print('import OK')"
-```
-Pass criteria: build exits 0; `import` prints `import OK`. The top-level
-`CMakeLists.txt` applies `patches/llama.cpp/*.patch` via `git apply` during
-configure — if it fails with "patch does not apply", the submodule isn't a
-real git checkout (see "Copying the project" above about keeping `.git`).
-
-**Step 2 — RPATH is correct on Linux (this is the main cross-platform fix
-to confirm).** The `.so` and its sibling `libllama.so`/`libggml*.so` must be
-found at runtime via `$ORIGIN` (Linux), not the macOS `@loader_path`:
-```bash
-python - <<'PY'
-import mineru_llama_cpp, pathlib
-so = pathlib.Path(mineru_llama_cpp.__file__).parent / "_mineru_llama_cpp.cpython-*-linux-gnu.so"
-import glob; so = glob.glob(str(so))[0]
-print("so:", so)
-PY
-# inspect the RPATH baked into the built .so:
-readelf -d $(python -c "import glob,mineru_llama_cpp,pathlib,os; d=pathlib.Path(mineru_llama_cpp.__file__).parent; print(glob.glob(os.path.join(str(d),'_mineru_llama_cpp*.so'))[0])") | grep -iE "RPATH|RUNPATH"
-```
-Pass criteria: `RUNPATH`/`RPATH` contains `$ORIGIN` (for an editable build
-it may instead point at the build tree via an absolute path — that's the
-`BUILD_RPATH`, also fine for editable installs; the `$ORIGIN` form is what
-matters for a wheel, verified in Step 6). A real end-to-end generate in
-Step 3 is the ultimate proof it resolves.
-
-**Step 3 — CPU inference actually runs end to end.**
-```bash
-python - <<PY
-from mineru_llama_cpp import Engine
-with Engine("$MODEL", "$MMPROJ") as e:
-    print(e.generate([{"role":"user","content":"hi"}]).content)
-PY
-```
-Pass criteria: prints generated text, no `cannot open shared object file`,
-no crash.
-
-**Step 4 — Vulkan build succeeds and the GPU is actually used.**
-```bash
-SKBUILD_CMAKE_ARGS="-DGGML_VULKAN=ON" uv pip install --no-build-isolation -e . 2>&1 | tee /tmp/build-vk.log
-python - <<PY
-from mineru_llama_cpp import Engine, LOG_LEVEL_INFO
-with Engine("$MODEL", "$MMPROJ", verbosity=LOG_LEVEL_INFO) as e:
-    print(e.generate([{"role":"user","content":"hi"}]).content)
-PY
-```
-Pass criteria: build exits 0; stderr shows a Vulkan device being enumerated
-/ selected (look for `Vulkan`/`ggml_vulkan` lines); generate produces text.
-(Default `verbosity` is `WARN` and hides this — that's why `LOG_LEVEL_INFO`
-is passed here.)
-
-**Step 5 — A1: the same Vulkan build gracefully falls back to CPU when no
-Vulkan runtime is available (THE critical assumption — a single "CPU+Vulkan"
-wheel must serve both GPU and no-GPU machines).** Source review says yes,
-but this is the step that proves it on hardware. Simulate "no Vulkan" two
-ways without touching the system:
-```bash
-# way A: ggml's own env var, skips Vulkan registration entirely
-GGML_DISABLE_VULKAN=1 python - <<PY
-from mineru_llama_cpp import Engine, LOG_LEVEL_INFO
-with Engine("$MODEL", "$MMPROJ", verbosity=LOG_LEVEL_INFO) as e:
-    print(e.generate([{"role":"user","content":"hi"}]).content)
-PY
-
-# way B: point the Vulkan loader at a nonexistent ICD (simulates missing driver)
-VK_ICD_FILENAMES=/nonexistent.json python - <<PY
-from mineru_llama_cpp import Engine, LOG_LEVEL_INFO
-with Engine("$MODEL", "$MMPROJ", verbosity=LOG_LEVEL_INFO) as e:
-    print(e.generate([{"role":"user","content":"hi"}]).content)
-PY
-```
-Pass criteria: BOTH ways produce text, do not crash, and the log shows CPU
-being used (no Vulkan device). If either crashes/aborts instead of falling
-back, A1 is FALSE and the single-wheel-covers-both plan needs rethinking —
-flag this loudly.
-
-**Step 6 — wheel builds and packages the right RPATH.** Confirms the
-distributable artifact (not just the editable install) is self-contained:
-```bash
-mkdir -p /tmp/wheel-out
-SKBUILD_CMAKE_ARGS="-DGGML_VULKAN=ON" uv build --wheel --no-build-isolation -o /tmp/wheel-out
-cd /tmp/wheel-out && python -m zipfile -e mineru_llama_cpp-*.whl extracted/
-readelf -d extracted/mineru_llama_cpp/_mineru_llama_cpp*.so | grep -iE "RPATH|RUNPATH"
-```
-Pass criteria: wheel builds; the packaged `.so`'s `RUNPATH`/`RPATH` is
-`$ORIGIN/../lib` (Linux form). Bundled `lib/*.so` and `bin/llama-server`
-should be present in the extracted tree; `include/`, `lib/cmake/`,
-`lib/pkgconfig/` should be absent (excluded via `wheel.exclude`).
-
-**Step 7 — full test suite (optional but recommended).** The suite is
-GPU/model-heavy (~6 min on Metal) and hardcodes model paths in
-`tests/conftest.py` (`MODEL`/`MMPROJ` point at the dev machine's paths).
-Edit those to the target machine's `$MODEL`/`$MMPROJ` first, then:
-```bash
-python -m pytest --tb=short
-```
-Pass criteria: all tests pass (the `test_concurrency.py` queueing regression
-test in particular exercises the multi-slot path).
-
-**Report back**: for each step, whether it passed and any stderr worth
-noting — especially Step 5 (A1) and Steps 2/6 (RPATH), since those are the
-Linux-specific unknowns this checklist exists to close.
-
 ## Known issues
 
 See `docs/known-issues.md` — notably: **use Q8_0 models, not BF16**, on
 Metal.
-
-## Status
-
-v0.1.0 — local development package only. No wheel/CI packaging, no
-HuggingFace auto-download, no batch-generate API, no Vulkan testing. CUDA
-support relies on llama.cpp's own standard `GGML_CUDA` CMake option (see
-"Linux deployment" above) but has not yet been built or run on real GPU
-hardware — this project has only been built/tested on macOS (Metal) so far.
-See the design spec's §1 "非目标" for the full non-goals list.
