@@ -120,11 +120,14 @@ before-all = "yum install -y git vulkan-headers vulkan-loader-devel glslc glslan
 # its stamps end up inconsistent on the 2nd+ build, and ninja fails with
 # "no such file or directory" trying to cd into a non-existent build subdir.
 before-build = "rm -rf build"
-# Tag x86_64 wheels as manylinux_2_34_x86_64_v3 — ggml-cpu enables AVX2/FMA/
-# BMI2/F16C by default (all v3 instructions). The default manylinux_2_34_x86_64
-# tag requires only v1 (SSE2); auditwheel detects the binary's v2+ minimum and
-# refuses to repair. aarch64 has no ISA-level tags, uses default manylinux_2_34_aarch64.
-repair-wheel-command = "bash -c 'if [ \"$(uname -m)\" = x86_64 ]; then PLAT=manylinux_2_34_x86_64_v3; else PLAT=manylinux_2_34_$(uname -m); fi && auditwheel repair --plat $PLAT -w {dest_dir} {wheel}'"
+# ggml-cpu enables AVX2/FMA/BMI2/F16C by default (all x86_64-v3 instructions).
+# auditwheel detects this and refuses to repair to manylinux_2_34_x86_64
+# (v1 baseline) without --disable-isa-ext-check. We disable the check —
+# the resulting wheel still carries the manylinux_2_34_x86_64 tag (so pip
+# will install it on any x86_64 Linux), but it actually requires a v3 CPU
+# to run. This matches how most numerical Python packages (numpy, scipy)
+# ship v3-requiring wheels under plain manylinux tags.
+repair-wheel-command = "auditwheel repair --disable-isa-ext-check -w {dest_dir} {wheel}"
 
 [tool.cibuildwheel.macos]
 # Metal is auto-detected on Apple Silicon. No extra flags.
