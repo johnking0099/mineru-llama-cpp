@@ -49,6 +49,8 @@ wheel.exclude = [
     "mineru_llama_cpp/lib/*.so.*.*.*",                    # Linux full-version libX.so.0.17.0
     "mineru_llama_cpp/lib/*[!0-9].dylib",                 # macOS unversioned dev symlink libX.dylib
     "mineru_llama_cpp/lib/*[!0-9].so",                    # Linux unversioned dev symlink libX.so
+    "mineru_llama_cpp/lib/*.lib",                         # Windows MSVC import lib (link-time only)
+    "mineru_llama_cpp/lib/*.dll.a",                       # MinGW import lib (link-time only)
     "!mineru_llama_cpp/lib/libllama-server-impl.dylib",   # keep single-bundle module (macOS)
     "!mineru_llama_cpp/lib/libllama-server-impl.so",      # keep single-bundle module (Linux)
 ]
@@ -188,6 +190,11 @@ before-all = "brew install ninja"
 repair-wheel-command = ""
 environment = { CMAKE_GENERATOR = "Ninja", VULKAN_SDK = "C:\\VulkanSDK", SKBUILD_CMAKE_ARGS = "-DGGML_VULKAN=ON" }
 before-all = "pip install ninja && curl.exe -sL -o vulkan_sdk.exe \"https://sdk.lunarg.com/sdk/download/1.4.350.0/windows/vulkan_sdk.exe\" && .\\vulkan_sdk.exe -t C:\\VulkanSDK --accept-licenses --default-answer --confirm-command install"
+# Clean stale .pyd from previous Python-version builds in the source tree
+# (scikit-build-core's editable "inplace" mode writes to src/mineru_llama_cpp/,
+# and the wheel.packages glob picks up every _mineru_llama_cpp.cp*.pyd it finds,
+# so without this clean-up cp310's wheel would also contain cp311/cp312 .pyd).
+before-build = "if exist src\\mineru_llama_cpp\\_mineru_llama_cpp.cp*.pyd del /q src\\mineru_llama_cpp\\_mineru_llama_cpp.cp*.pyd"
 archs = ["AMD64"]
 
 # ARM64 build runs on windows-11-arm runner (native ARM64, not cross-compile).
@@ -200,6 +207,7 @@ archs = ["AMD64"]
 # not in wheel).
 [[tool.cibuildwheel.overrides]]
 select = "cp*-win_arm64"
-inherit = { "environment" = "none", "before-all" = "none" }
+inherit = { "environment" = "none", "before-all" = "none", "before-build" = "none" }
 environment = { CMAKE_GENERATOR = "Ninja", SKBUILD_CMAKE_ARGS = "-DCMAKE_C_COMPILER=clang-cl;-DCMAKE_CXX_COMPILER=clang-cl;-DGGML_OPENMP=OFF" }
 before-all = "pip install ninja"
+before-build = "if exist src\\mineru_llama_cpp\\_mineru_llama_cpp.cp*.pyd del /q src\\mineru_llama_cpp\\_mineru_llama_cpp.cp*.pyd"
