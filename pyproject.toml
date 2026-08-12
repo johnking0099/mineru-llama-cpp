@@ -130,7 +130,17 @@ before-build = "rm -rf build"
 # will install it on any x86_64 Linux), but it actually requires a v3 CPU
 # to run. This matches how most numerical Python packages (numpy, scipy)
 # ship v3-requiring wheels under plain manylinux tags.
-repair-wheel-command = "auditwheel repair --disable-isa-ext-check -w {dest_dir} {wheel}"
+#
+# --exclude libvulkan.so.1: Vulkan loader is a user-installed runtime
+# dependency, not a wheel-bundled one. Vulkan is an optional accelerator
+# (GGML_BACKEND_DL=ON); if the user has no Vulkan ICD driver installed,
+# the Vulkan backend should gracefully fall back to CPU. Bundling the
+# loader (auditwheel default) only makes libggml-vulkan.so dlopen-able
+# without a real Vulkan stack — it doesn't add GPU support. Machines
+# with a GPU driver already have the loader installed (ICD packages
+# depend on it). Excluding libvulkan.so.1 keeps the wheel 3.1 MB
+# smaller and lets GGML_BACKEND_DL's fallback design work as intended.
+repair-wheel-command = "auditwheel repair --disable-isa-ext-check --exclude libvulkan.so.1 -w {dest_dir} {wheel}"
 
 # musllinux (Alpine) — Vulkan deps via apk (Alpine package names:
 # spirv-headers-devel (EL) → spirv-headers (Alpine), rest match; shaderc
